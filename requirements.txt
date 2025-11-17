@@ -1,0 +1,10 @@
+# pip install -r requirements.txt
+python-dotenv
+python-dateutil
+python-binance
+openai
+pandas
+numpy
+requests
+streamlit
+altair
