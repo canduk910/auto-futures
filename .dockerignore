@@ -1,0 +1,25 @@
+# Git
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtualenv
+.venv/
+venv/
+
+# Local runtime / secrets
+.env
+runtime/
+logs/
+
+# IDE / editor
+.idea/
+.vscode/
+.DS_Store
+

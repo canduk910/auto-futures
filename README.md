@@ -88,8 +88,87 @@ python auto_future_trader.py
 streamlit run ui/ui_dashboard.py --server.port 8501 --server.enableCORS false
 ```
 
-## 8. 참고 문서
+## 8. 환경 변수 샘플(.env)
+서비스 실행 전 `.env`를 작성해 아래와 같이 핵심 키를 채워야 합니다.
+
+```dotenv
+# Binance API keys (fill in the values from your account)
+BINANCE_TESTNET_API_KEY=
+BINANCE_TESTNET_SECRET_KEY=
+BINANCE_API_KEY=
+BINANCE_SECRET_KEY=
+
+# OPEN AI API Key
+OPENAI_API_KEY=
+LOG_LEVEL=INFO
+
+# Default environment ("paper" for testnet, "live" for real trading)
+ENV=paper
+DRY_RUN=False   # 주문실행 테스트용 플래그 (True: 주문 실행 안함, False: 실제 주문 실행)
+SYMBOL=ETHUSDT  # 거래 심볼 (예: BTCUSDT, ETHUSDT 등)
+LEVERAGE=5      # 레버리지 설정 (예: 1, 5, 10, 20 등)
+
+# 웹소켓 설정 (WebSocket settings)
+WS_ENABLE=true          # 웹소켓 사용 여부
+WS_USER_ENABLE=true     # 사용자 데이터 스트림 사용 여부
+WS_PRICE_ENABLE=true    # 가격 데이터 스트림 사용 여부
+WS_TRACE=true           # 웹소켓 디버그 트레이스 출력 여부
+
+# Loop/runner options
+LOOP_ENABLE=true
+LOOP_TRIGGER=event        # kline | timer | event
+LOOP_INTERVAL_SEC=60
+LOOP_COOLDOWN_SEC=8
+LOOP_BACKOFF_MAX_SEC=30
+
+# Volatility detector parameters
+MP_WINDOW_SEC=10      # 변동성 탐지기 창 길이 (초)
+MP_DELTA_PCT=0.15     # 변동성 탐지기 델타 퍼센트 임계값
+KLINE_RANGE_PCT=0.6   # 캔들 범위 퍼센트 임계값
+VOL_LOOKBACK=20       # 거래량 조회 기간
+VOL_MULT=3.0          # 거래량 배수 (조회기간의 평균거래량 대비 직전 거래량)
+USE_QUOTE_VOLUME=true
+```
+
+필요 시 `docs/architecture.md`의 체크리스트를 참고해 운영 환경 값을 조정하세요.
+
+## 9. Google Cloud Run 준비 작업
+1. Docker 이미지 빌드 (로컬 테스트 권장):
+   ```bash
+   docker build -t auto-futures:local .
+   docker run --rm --env-file .env auto-futures:local
+   ```
+2. Artifact Registry/Container Registry에 업로드:
+   ```bash
+   gcloud auth configure-docker
+   gcloud builds submit --tag gcr.io/PROJECT_ID/auto-futures
+   ```
+3. Secret Manager에 주요 비밀 저장 후 Cloud Run에 맵핑:
+   ```bash
+   gcloud secrets create binance-key --data-file=- <<'EOF'
+   BINANCE_TESTNET_API_KEY=...
+   BINANCE_TESTNET_SECRET_KEY=...
+   EOF
+   gcloud secrets create openai-key --data-file=- <<'EOF'
+   OPENAI_API_KEY=...
+   EOF
+   ```
+4. Cloud Run 배포 예시:
+   ```bash
+   gcloud run deploy auto-futures \
+     --image gcr.io/PROJECT_ID/auto-futures \
+     --region asia-northeast3 \
+     --platform managed \
+     --memory 1Gi \
+     --cpu 1 \
+     --max-instances 1 \
+     --set-env-vars ENV=paper,SYMBOL=ETHUSDT,DRY_RUN=false,LOG_LEVEL=INFO \
+     --set-secrets BINANCE_TESTNET_API_KEY=binance-key:latest,BINANCE_TESTNET_SECRET_KEY=binance-key:latest,OPENAI_API_KEY=openai-key:latest \
+     --no-allow-unauthenticated
+   ```
+5. 필요 시 Streamlit UI를 별도 서비스로 배포하거나 Cloud Run Jobs를 사용해 백오피스 배치를 실행하세요.
+
+## 10. 참고 문서
 - `docs/architecture.md`: 더 자세한 구조, 이벤트 플로우, Pub/Sub 설계 및 배포 체크리스트가 수록되어 있습니다.
 
 Auto-Futures는 실험용 코드로 제공되며, 실거래에 사용하기 전에 반드시 시뮬레이션과 리스크 검증을 진행하세요.
-
