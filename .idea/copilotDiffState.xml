@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CopilotDiffPersistence">
+    <option name="pendingDiffs">
+      <map>
+        <entry key="$PROJECT_DIR$/auto-futures/.dockerignore">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/auto-futures/.dockerignore" />
+              <option name="updatedContent" value="# Git&#10;.git&#10;.gitignore&#10;&#10;# Python cache&#10;__pycache__/&#10;*.pyc&#10;*.pyo&#10;*.pyd&#10;.Python&#10;&#10;# Virtualenv&#10;.venv/&#10;venv/&#10;&#10;# Local runtime / secrets&#10;.env&#10;runtime/&#10;logs/&#10;&#10;# IDE / editor&#10;.idea/&#10;.vscode/&#10;.DS_Store&#10;" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
+        <entry key="$PROJECT_DIR$/auto-futures/.env">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/auto-futures/.env" />
+              <option name="originalContent" value="# Binance API keys (fill in the values from your account)&#10;BINANCE_TESTNET_API_KEY=i1kZvLLZy0a9uHMoa3yR36xnpRS8S1srEGj0Wkl16NVSbZ8Uv84WizfdDzhQIiGY&#10;BINANCE_TESTNET_SECRET_KEY=4e7sJQkzEyHa8OP0yI7ppVFIXFerfYKakpE7S0WNvtMWj1KGLezlD2UERItVjO3B&#10;BINANCE_API_KEY=&#10;BINANCE_SECRET_KEY=&#10;&#10;# OPEN AI API Key&#10;OPENAI_API_KEY=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&#10;LOG_LEVEL=INFO&#10;&#10;# Default environment (&quot;paper&quot; for testnet, &quot;live&quot; for real trading)&#10;ENV=paper&#10;DRY_RUN=False   # 주문실행 테스트용 플래그 (True: 주문 실행 안함, False: 실제 주문 실행)&#10;SYMBOL=ETHUSDT  # 거래 심볼 (예: BTCUSDT, ETHUSDT 등)&#10;LEVERAGE=5      # 레버리지 설정 (예: 1, 5, 10, 20 등)&#10;POSITION_SIDE=LONG  # 포지션 방향 (LONG&#10;&#10;# 웹소켓 설정 (WebSocket settings)&#10;WS_ENABLE=true          # 웹소켓 사용 여부&#10;WS_USER_ENABLE=true     # 사용자 데이터 스트림 사용 여부&#10;WS_PRICE_ENABLE=true    # 가격 데이터 스트림 사용 여부&#10;WS_TRACE=true           # 웹소켓 디버그 트레이스 출력 여부&#10;&#10;# Loop/runner options&#10;LOOP_ENABLE=true&#10;LOOP_TRIGGER=event        # kline | timer | event&#10;LOOP_INTERVAL_SEC=60&#10;LOOP_COOLDOWN_SEC=8&#10;LOOP_BACKOFF_MAX_SEC=30&#10;&#10;# Volatility detector parameters&#10;MP_WINDOW_SEC=10&#10;MP_DELTA_PCT=0.35&#10;KLINE_RANGE_PCT=0.6&#10;VOL_LOOKBACK=20&#10;VOL_MULT=3.0&#10;USE_QUOTE_VOLUME=true&#10;" />
+              <option name="updatedContent" value="# Binance API keys (fill in the values from your account)&#10;BINANCE_TESTNET_API_KEY=i1kZvLLZy0a9uHMoa3yR36xnpRS8S1srEGj0Wkl16NVSbZ8Uv84WizfdDzhQIiGY&#10;BINANCE_TESTNET_SECRET_KEY=4e7sJQkzEyHa8OP0yI7ppVFIXFerfYKakpE7S0WNvtMWj1KGLezlD2UERItVjO3B&#10;BINANCE_API_KEY=&#10;BINANCE_SECRET_KEY=&#10;&#10;# OPEN AI API Key&#10;OPENAI_API_KEY=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&#10;LOG_LEVEL=INFO&#10;&#10;# Default environment (&quot;paper&quot; for testnet, &quot;live&quot; for real trading)&#10;ENV=paper&#10;DRY_RUN=False   # 주문실행 테스트용 플래그 (True: 주문 실행 안함, False: 실제 주문 실행)&#10;SYMBOL=ETHUSDT  # 거래 심볼 (예: BTCUSDT, ETHUSDT 등)&#10;LEVERAGE=5      # 레버리지 설정 (예: 1, 5, 10, 20 등)&#10;POSITION_SIDE=LONG  # 포지션 방향 (LONG&#10;&#10;# 웹소켓 설정 (WebSocket settings)&#10;WS_ENABLE=true          # 웹소켓 사용 여부&#10;WS_USER_ENABLE=true     # 사용자 데이터 스트림 사용 여부&#10;WS_PRICE_ENABLE=true    # 가격 데이터 스트림 사용 여부&#10;WS_TRACE=true           # 웹소켓 디버그 트레이스 출력 여부&#10;&#10;# Loop/runner options&#10;LOOP_ENABLE=true&#10;LOOP_TRIGGER=event        # kline | timer | event&#10;LOOP_INTERVAL_SEC=60&#10;LOOP_COOLDOWN_SEC=8&#10;LOOP_BACKOFF_MAX_SEC=30&#10;&#10;# Volatility detector parameters&#10;MP_WINDOW_SEC=10&#10;MP_DELTA_PCT=0.35&#10;KLINE_RANGE_PCT=0.6&#10;VOL_LOOKBACK=20&#10;VOL_MULT=3.0&#10;USE_QUOTE_VOLUME=true" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
+        <entry key="$PROJECT_DIR$/auto-futures/Dockerfile">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/auto-futures/Dockerfile" />
+              <option name="updatedContent" value="# syntax=docker/dockerfile:1.7&#10;FROM python:3.11-slim AS runtime&#10;&#10;ENV PYTHONUNBUFFERED=1 \&#10;    PYTHONDONTWRITEBYTECODE=1 \&#10;    PIP_NO_CACHE_DIR=1&#10;&#10;WORKDIR /app&#10;&#10;# Install build deps for pip packages (removed after layer)&#10;RUN apt-get update \&#10;    &amp;&amp; apt-get install -y --no-install-recommends build-essential \&#10;    &amp;&amp; rm -rf /var/lib/apt/lists/*&#10;&#10;COPY requirements.txt ./&#10;RUN pip install --upgrade pip \&#10;    &amp;&amp; pip install --no-cache-dir -r requirements.txt&#10;&#10;COPY . .&#10;&#10;# Drop root for Cloud Run best practice&#10;RUN useradd --create-home trader \&#10;    &amp;&amp; chown -R trader:trader /app&#10;USER trader&#10;&#10;# Make entrypoint executable in case git clone preserved mode&#10;RUN chmod +x /app/docker-entrypoint.sh&#10;&#10;ENTRYPOINT [&quot;/app/docker-entrypoint.sh&quot;]&#10;CMD [&quot;python&quot;, &quot;auto_future_trader.py&quot;]&#10;" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
+        <entry key="$PROJECT_DIR$/auto-futures/docker-entrypoint.sh">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/auto-futures/docker-entrypoint.sh" />
+              <option name="updatedContent" value="#!/bin/bash&#10;set -euo pipefail&#10;&#10;if [ -n &quot;${GOOGLE_CLOUD_PROJECT:-}&quot; ]; then&#10;  echo &quot;[ENTRYPOINT] Running in Cloud Run project ${GOOGLE_CLOUD_PROJECT}&quot;&#10;fi&#10;&#10;exec &quot;$@&quot;&#10;" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>
