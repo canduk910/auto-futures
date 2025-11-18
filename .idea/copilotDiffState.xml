@@ -20,22 +20,6 @@
             </PendingDiffInfo>
           </value>
         </entry>
-        <entry key="$PROJECT_DIR$/auto-futures/Dockerfile">
-          <value>
-            <PendingDiffInfo>
-              <option name="filePath" value="$PROJECT_DIR$/auto-futures/Dockerfile" />
-              <option name="updatedContent" value="# syntax=docker/dockerfile:1.7&#10;FROM python:3.11-slim AS runtime&#10;&#10;ENV PYTHONUNBUFFERED=1 \&#10;    PYTHONDONTWRITEBYTECODE=1 \&#10;    PIP_NO_CACHE_DIR=1&#10;&#10;WORKDIR /app&#10;&#10;# Install build deps for pip packages (removed after layer)&#10;RUN apt-get update \&#10;    &amp;&amp; apt-get install -y --no-install-recommends build-essential \&#10;    &amp;&amp; rm -rf /var/lib/apt/lists/*&#10;&#10;COPY requirements.txt ./&#10;RUN pip install --upgrade pip \&#10;    &amp;&amp; pip install --no-cache-dir -r requirements.txt&#10;&#10;COPY . .&#10;&#10;# Drop root for Cloud Run best practice&#10;RUN useradd --create-home trader \&#10;    &amp;&amp; chown -R trader:trader /app&#10;USER trader&#10;&#10;# Make entrypoint executable in case git clone preserved mode&#10;RUN chmod +x /app/docker-entrypoint.sh&#10;&#10;ENTRYPOINT [&quot;/app/docker-entrypoint.sh&quot;]&#10;CMD [&quot;python&quot;, &quot;auto_future_trader.py&quot;]&#10;" />
-            </PendingDiffInfo>
-          </value>
-        </entry>
-        <entry key="$PROJECT_DIR$/auto-futures/docker-entrypoint.sh">
-          <value>
-            <PendingDiffInfo>
-              <option name="filePath" value="$PROJECT_DIR$/auto-futures/docker-entrypoint.sh" />
-              <option name="updatedContent" value="#!/bin/bash&#10;set -euo pipefail&#10;&#10;if [ -n &quot;${GOOGLE_CLOUD_PROJECT:-}&quot; ]; then&#10;  echo &quot;[ENTRYPOINT] Running in Cloud Run project ${GOOGLE_CLOUD_PROJECT}&quot;&#10;fi&#10;&#10;exec &quot;$@&quot;&#10;" />
-            </PendingDiffInfo>
-          </value>
-        </entry>
       </map>
     </option>
   </component>

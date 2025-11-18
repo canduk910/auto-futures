@@ -27,5 +27,6 @@ USER trader
 RUN chmod +x /app/docker-entrypoint.sh
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["python", "auto_future_trader.py"]
+#CMD ["sh", "-c", "streamlit run ui/ui_dashboard.py --server.port $PORT --server.address 0.0.0.0"]
+#CMD ["python", "auto_future_trader.py"]
 
