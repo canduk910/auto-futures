@@ -14,6 +14,9 @@ MEMORY=${MEMORY:-1Gi}
 CPU=${CPU:-1}
 MAX_INSTANCES=${MAX_INSTANCES:-1}
 ALLOW_UNAUTH=${ALLOW_UNAUTH:-true}
+BUILD_LOGGING=${BUILD_LOGGING:-cloud-logging-only}
+GRANT_SECRET_ROLES=${GRANT_SECRET_ROLES:-true}
+SECRET_ROLE=${SECRET_ROLE:-roles/secretmanager.admin}
 
 ensure_secret() {
   local secret="$1"
@@ -22,11 +25,28 @@ ensure_secret() {
   fi
 }
 
+maybe_grant_secret_roles() {
+  [[ "$GRANT_SECRET_ROLES" == "true" ]] || return 0
+  local project_number
+  project_number=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+  local build_sa="${project_number}@cloudbuild.gserviceaccount.com"
+  local run_sa="${project_number}-compute@developer.gserviceaccount.com"
+  echo "[STEP] Ensuring Secret Manager role $SECRET_ROLE for $build_sa and $run_sa"
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${build_sa}" \
+    --role="$SECRET_ROLE" >/dev/null
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${run_sa}" \
+    --role="$SECRET_ROLE" >/dev/null
+}
+
 main() {
   gcloud config set project "$PROJECT_ID" >/dev/null
 
+  maybe_grant_secret_roles
+
   echo "[STEP] Building container image ${IMAGE}"
-  gcloud builds submit --tag "$IMAGE"
+  gcloud builds submit --tag "$IMAGE" --logging="$BUILD_LOGGING"
 
   ensure_secret binance-testnet-api-key
   ensure_secret binance-testnet-secret-key
@@ -40,7 +60,7 @@ main() {
     --memory "$MEMORY"
     --cpu "$CPU"
     --max-instances "$MAX_INSTANCES"
-    --set-env-vars ENV=paper,DRY_RUN=false,SYMBOL=ETHUSDT,LOG_LEVEL=INFO,WS_ENABLE=true,WS_USER_ENABLE=true,WS_PRICE_ENABLE=true,WS_TRACE=false,LOOP_ENABLE=true,LOOP_TRIGGER=event,LOOP_INTERVAL_SEC=60,LOOP_COOLDOWN_SEC=8,LOOP_BACKOFF_MAX_SEC=30,MP_WINDOW_SEC=10,MP_DELTA_PCT=0.35,KLINE_RANGE_PCT=0.6,VOL_LOOKBACK=20,VOL_MULT=3.0,USE_QUOTE_VOLUME=true,LEVERAGE=5,TZ=Asia/Seoul,PROJECT_ID=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID}
+    --set-env-vars ENV=paper,DRY_RUN=false,SYMBOL=ETHUSDT,LOG_LEVEL=INFO,WS_ENABLE=true,WS_USER_ENABLE=true,WS_PRICE_ENABLE=true,WS_TRACE=false,LOOP_ENABLE=true,LOOP_TRIGGER=event,LOOP_INTERVAL_SEC=60,LOOP_COOLDOWN_SEC=8,LOOP_BACKOFF_MAX_SEC=30,MP_WINDOW_SEC=10,MP_DELTA_PCT=0.2,KLINE_RANGE_PCT=0.5,VOL_LOOKBACK=20,VOL_MULT=3.0,USE_QUOTE_VOLUME=true,LEVERAGE=5,TZ=Asia/Seoul,PROJECT_ID=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID}
     --set-secrets BINANCE_TESTNET_API_KEY=binance-testnet-api-key:latest,BINANCE_TESTNET_SECRET_KEY=binance-testnet-secret-key:latest,OPENAI_API_KEY=openai-api-key:latest
   )
   if [[ "${ALLOW_UNAUTH}" == "true" ]]; then
