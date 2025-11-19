@@ -9,6 +9,8 @@ import pandas as pd
 import streamlit as st
 from dotenv import dotenv_values, set_key
 import time
+import os
+from config_store import load_config, save_config
 
 try:
     from streamlit_autorefresh import st_autorefresh as _autorefresh_component  # type: ignore
@@ -42,6 +44,7 @@ from status_store import read_status, read_ai_history, read_close_history  # noq
 st.set_page_config(page_title="자동 암호화폐 트레이딩", layout="wide")
 
 ENV_PATH = CURRENT_DIR.parent / ".env"
+RUNNING_ON_CLOUD = bool(os.getenv("K_SERVICE"))
 BOOL_KEYS = {
     "DRY_RUN",
     "WS_ENABLE",
@@ -678,8 +681,25 @@ elif selected_tab == "청산 분석":
 
 elif selected_tab == "설정":
     st.subheader("환경 설정")
-    env_data = dotenv_values(ENV_PATH)
-    editable_data = {key: env_data[key] for key in EDITABLE_KEYS if key in env_data}
+
+    def _fetch_config_values() -> Dict[str, str]:
+        try:
+            data = load_config()
+            return {k: v for k, v in data.values.items() if k in EDITABLE_KEYS}
+        except Exception as exc:
+            st.error(f"환경 설정을 불러오지 못했습니다: {exc}")
+            return {}
+
+    def _persist_config_updates(updates: Dict[str, Any]) -> None:
+        str_values = {k: str(v) for k, v in updates.items()}
+        try:
+            save_config(str_values)
+            st.success("환경 설정이 업데이트되었습니다.")
+            _rerun_app()
+        except Exception as exc:
+            st.error(f"환경 설정 저장 실패: {exc}")
+
+    editable_data = _fetch_config_values()
 
     def download_env_file():
         """Download the .env file."""
@@ -689,52 +709,77 @@ elif selected_tab == "설정":
 
     def upload_env_file(uploaded_file) -> None:
         """Upload and apply the .env file."""
-        if uploaded_file is not None:
-            with st.spinner(".env 파일 업로드 중..."):
-                time.sleep(1)  # Simulate some delay
-                for key in editable_data.keys():
-                    if key in uploaded_file:
-                        value = uploaded_file[key]
-                        if key in BOOL_KEYS:
-                            value = value.lower() in ("true", "1", "yes")
-                        elif key in FLOAT_KEYS:
-                            value = float(value)
-                        elif key in INT_KEYS:
-                            value = int(value)
-                        set_key(ENV_PATH, key, str(value), quote_mode='never')
+        if uploaded_file is None:
+            st.warning("업로드할 .env 파일을 선택하세요.")
+            return
+        with st.spinner(".env 파일 업로드 중..."):
+            env_content = uploaded_file.read().decode("utf-8")
+            updates: Dict[str, str] = {}
+            for line in env_content.splitlines():
+                if not line or line.strip().startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if key in EDITABLE_KEYS:
+                    updates[key] = value.strip()
+            try:
+                save_config(updates)
                 st.success(".env 파일이 성공적으로 업로드되었습니다.")
                 _rerun_app()
+            except Exception as exc:
+                st.error(f"설정 업로드 실패: {exc}")
 
     col1, col2 = st.columns([3, 1])
     with col1:
         st.write("### 현재 설정 값")
+        if not editable_data:
+            st.info("표시할 설정 값이 없습니다.")
         for key, value in editable_data.items():
+            normalized_value = str(value).lower()
+            input_key = f"config_{key}"
             if key in BOOL_KEYS:
-                checkbox = st.checkbox(f"{ENV_FIELD_INFO[key]['label']} ({key})", value.lower() in ("true", "1", "yes"), key=key)
-                if checkbox != (value.lower() in ("true", "1", "yes")):
-                    set_key(ENV_PATH, key, str(checkbox).lower(), quote_mode='never')
-                    _rerun_app()
+                checkbox = st.checkbox(
+                    f"{ENV_FIELD_INFO[key]['label']} ({key})",
+                    normalized_value in ("true", "1", "yes"),
+                    key=input_key,
+                )
+                if checkbox != (normalized_value in ("true", "1", "yes")):
+                    _persist_config_updates({key: checkbox})
             elif key in FLOAT_KEYS:
-                new_value = st.number_input(f"{ENV_FIELD_INFO[key]['label']} ({key})", value=float(value), format="%.8f", key=key)
+                new_value = st.number_input(
+                    f"{ENV_FIELD_INFO[key]['label']} ({key})",
+                    value=float(value),
+                    format="%.8f",
+                    key=input_key,
+                )
                 if new_value != float(value):
-                    set_key(ENV_PATH, key, str(new_value), quote_mode='never')
-                    _rerun_app()
+                    _persist_config_updates({key: new_value})
             elif key in INT_KEYS:
-                new_value = st.number_input(f"{ENV_FIELD_INFO[key]['label']} ({key})", value=int(value), format="%d", key=key)
+                new_value = st.number_input(
+                    f"{ENV_FIELD_INFO[key]['label']} ({key})",
+                    value=int(value),
+                    format="%d",
+                    key=input_key,
+                )
                 if new_value != int(value):
-                    set_key(ENV_PATH, key, str(new_value), quote_mode='never')
-                    _rerun_app()
+                    _persist_config_updates({key: new_value})
             else:
-                new_value = st.text_input(f"{ENV_FIELD_INFO[key]['label']} ({key})", value=value, key=key)
+                new_value = st.text_input(
+                    f"{ENV_FIELD_INFO[key]['label']} ({key})",
+                    value=value,
+                    key=input_key,
+                )
                 if new_value != value:
-                    set_key(ENV_PATH, key, new_value, quote_mode='never')
-                    _rerun_app()
+                    _persist_config_updates({key: new_value})
 
     with col2:
         st.write("### .env 파일 관리")
+        if RUNNING_ON_CLOUD:
+            st.caption("Cloud Run에서는 Secret Manager를 통해 설정이 관리됩니다. .env 파일은 표시용으로만 사용됩니다.")
         if st.button("다운로드"):
             env_file_path = download_env_file()
             st.markdown(f"[.env 파일 다운로드]({env_file_path})", unsafe_allow_html=True)
         uploaded_file = st.file_uploader("업로드할 .env 파일 선택", type="env")
         if st.button("업로드"):
             upload_env_file(uploaded_file)
+

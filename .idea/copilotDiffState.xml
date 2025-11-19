@@ -20,6 +20,15 @@
             </PendingDiffInfo>
           </value>
         </entry>
+        <entry key="$PROJECT_DIR$/requirements.txt">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/requirements.txt" />
+              <option name="originalContent" value="# pip install -r requirements.txt&#10;python-dotenv&#10;python-dateutil&#10;python-binance&#10;openai&#10;pandas&#10;numpy&#10;requests&#10;streamlit&#10;streamlit-autorefresh&#10;altair&#10;google-cloud-secret-manager" />
+              <option name="updatedContent" value="# pip install -r requirements.txt&#10;python-dotenv&#10;python-dateutil&#10;python-binance&#10;openai&#10;pandas&#10;numpy&#10;requests&#10;streamlit&#10;streamlit-autorefresh&#10;altair&#10;google-cloud-secret-manager" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
       </map>
     </option>
   </component>

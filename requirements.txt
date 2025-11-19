@@ -7,4 +7,6 @@ pandas
 numpy
 requests
 streamlit
+streamlit-autorefresh
 altair
+google-cloud-secret-manager
