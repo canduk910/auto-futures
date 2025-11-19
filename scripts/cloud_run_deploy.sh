@@ -17,11 +17,21 @@ ALLOW_UNAUTH=${ALLOW_UNAUTH:-true}
 BUILD_LOGGING=${BUILD_LOGGING:-cloud-logging-only}
 GRANT_SECRET_ROLES=${GRANT_SECRET_ROLES:-true}
 SECRET_ROLE=${SECRET_ROLE:-roles/secretmanager.admin}
+SUPPORTS_BUILD_LOGGING_FLAG=""
 
 ensure_secret() {
   local secret="$1"
   if ! gcloud secrets describe "$secret" >/dev/null 2>&1; then
     echo "[WARN] Secret $secret not found. Create it before deployment." >&2
+  fi
+}
+
+detect_build_logging_support() {
+  [[ -n "$SUPPORTS_BUILD_LOGGING_FLAG" ]] && return 0
+  if gcloud builds submit --help 2>/dev/null | grep -q "--logging"; then
+    SUPPORTS_BUILD_LOGGING_FLAG="yes"
+  else
+    SUPPORTS_BUILD_LOGGING_FLAG="no"
   fi
 }
 
@@ -46,7 +56,13 @@ main() {
   maybe_grant_secret_roles
 
   echo "[STEP] Building container image ${IMAGE}"
-  gcloud builds submit --tag "$IMAGE" --logging="$BUILD_LOGGING"
+  detect_build_logging_support
+  if [[ "$SUPPORTS_BUILD_LOGGING_FLAG" == "yes" ]]; then
+    gcloud builds submit --tag "$IMAGE" --logging="$BUILD_LOGGING"
+  else
+    echo "[INFO] gcloud builds submit --logging not supported on this version; using default logging behavior"
+    gcloud builds submit --tag "$IMAGE"
+  fi
 
   ensure_secret binance-testnet-api-key
   ensure_secret binance-testnet-secret-key
