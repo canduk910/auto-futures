@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -19,7 +20,10 @@ except Exception:  # pragma: no cover
 
 ENV_FILE_PATH = Path(__file__).resolve().parent / ".env"
 CONFIG_SECRET_NAME = os.getenv("CONFIG_SECRET_NAME", "auto-futures-config")
-PROJECT_ID = os.getenv("PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
+def _get_project_id() -> str:
+    return os.getenv("PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
+
+PROJECT_ID = _get_project_id()
 
 
 @dataclass
@@ -45,9 +49,10 @@ def _ensure_secret_client():
 
 
 def _secret_resource_name() -> str:
-    if not PROJECT_ID:
+    project_id = _get_project_id()
+    if not project_id:
         raise RuntimeError("PROJECT_ID 또는 GOOGLE_CLOUD_PROJECT 환경변수가 필요합니다.")
-    return f"projects/{PROJECT_ID}/secrets/{CONFIG_SECRET_NAME}"
+    return f"projects/{project_id}/secrets/{CONFIG_SECRET_NAME}"
 
 
 def _ensure_secret_exists(client: Any) -> str:
@@ -85,6 +90,11 @@ def _load_from_secret_manager() -> ConfigData:
 
 def load_config() -> ConfigData:
     if _is_cloud_run():
+        if not _get_project_id():
+            logging.warning("PROJECT_ID가 설정되지 않아 Secret Manager를 사용할 수 없습니다. .env로 폴백합니다.")
+            if not ENV_FILE_PATH.exists():
+                return ConfigData(values={}, source="missing_env_file")
+            return _load_from_env_file()
         return _load_from_secret_manager()
     if not ENV_FILE_PATH.exists():
         return ConfigData(values={}, source="missing_env_file")
@@ -94,6 +104,9 @@ def load_config() -> ConfigData:
 def save_config(updates: Dict[str, str]) -> Tuple[ConfigData, str]:
     """Persist configuration updates and return new snapshot and source."""
     if _is_cloud_run():
+        if not _get_project_id():
+            logging.warning("PROJECT_ID가 없어 Secret Manager 저장을 건너뜁니다. .env로 저장합니다.")
+            return _save_via_env_file(updates)
         return _save_via_secret_manager(updates)
     return _save_via_env_file(updates)
 

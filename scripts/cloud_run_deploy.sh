@@ -13,6 +13,7 @@ IMAGE=${IMAGE:-"asia-northeast3-docker.pkg.dev/${PROJECT_ID}/auto-futures/${IMAG
 MEMORY=${MEMORY:-1Gi}
 CPU=${CPU:-1}
 MAX_INSTANCES=${MAX_INSTANCES:-1}
+ALLOW_UNAUTH=${ALLOW_UNAUTH:-true}
 
 ensure_secret() {
   local secret="$1"
@@ -32,16 +33,23 @@ main() {
   ensure_secret openai-api-key
 
   echo "[STEP] Deploying ${SERVICE} to Cloud Run"
-  gcloud run deploy "$SERVICE" \
-    --image "$IMAGE" \
-    --region "$REGION" \
-    --platform managed \
-    --memory "$MEMORY" \
-    --cpu "$CPU" \
-    --max-instances "$MAX_INSTANCES" \
-    --set-env-vars ENV=paper,DRY_RUN=false,SYMBOL=ETHUSDT,LOG_LEVEL=INFO,WS_ENABLE=true,WS_USER_ENABLE=true,WS_PRICE_ENABLE=true,WS_TRACE=false,LOOP_ENABLE=true,LOOP_TRIGGER=event,LOOP_INTERVAL_SEC=60,LOOP_COOLDOWN_SEC=8,LOOP_BACKOFF_MAX_SEC=30,MP_WINDOW_SEC=10,MP_DELTA_PCT=0.35,KLINE_RANGE_PCT=0.6,VOL_LOOKBACK=20,VOL_MULT=3.0,USE_QUOTE_VOLUME=true,LEVERAGE=5 \
-    --set-secrets BINANCE_TESTNET_API_KEY=binance-testnet-api-key:latest,BINANCE_TESTNET_SECRET_KEY=binance-testnet-secret-key:latest,OPENAI_API_KEY=openai-api-key:latest \
-    --no-allow-unauthenticated
+  deploy_args=(
+    --image "$IMAGE"
+    --region "$REGION"
+    --platform managed
+    --memory "$MEMORY"
+    --cpu "$CPU"
+    --max-instances "$MAX_INSTANCES"
+    --set-env-vars ENV=paper,DRY_RUN=false,SYMBOL=ETHUSDT,LOG_LEVEL=INFO,WS_ENABLE=true,WS_USER_ENABLE=true,WS_PRICE_ENABLE=true,WS_TRACE=false,LOOP_ENABLE=true,LOOP_TRIGGER=event,LOOP_INTERVAL_SEC=60,LOOP_COOLDOWN_SEC=8,LOOP_BACKOFF_MAX_SEC=30,MP_WINDOW_SEC=10,MP_DELTA_PCT=0.35,KLINE_RANGE_PCT=0.6,VOL_LOOKBACK=20,VOL_MULT=3.0,USE_QUOTE_VOLUME=true,LEVERAGE=5,TZ=Asia/Seoul
+    --set-secrets BINANCE_TESTNET_API_KEY=binance-testnet-api-key:latest,BINANCE_TESTNET_SECRET_KEY=binance-testnet-secret-key:latest,OPENAI_API_KEY=openai-api-key:latest
+  )
+  if [[ "${ALLOW_UNAUTH}" == "true" ]]; then
+    deploy_args+=(--allow-unauthenticated)
+  else
+    deploy_args+=(--no-allow-unauthenticated)
+  fi
+
+  gcloud run deploy "$SERVICE" "${deploy_args[@]}"
 
   echo "[DONE] Deployment finished."
 }
