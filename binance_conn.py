@@ -26,8 +26,10 @@ from common_utils import safe_float, to_iso
 # - env="live": 기본 실서버 사용.
 
 def create_binance_client(env: str = "paper") -> Client:
-    api_key = os.getenv("BINANCE_TESTNET_API_KEY")
-    api_secret = os.getenv("BINANCE_TESTNET_SECRET_KEY")
+    api_key_raw = os.getenv("BINANCE_TESTNET_API_KEY")
+    api_secret_raw = os.getenv("BINANCE_TESTNET_SECRET_KEY")
+    api_key = api_key_raw.strip() if isinstance(api_key_raw, str) else None
+    api_secret = api_secret_raw.strip() if isinstance(api_secret_raw, str) else None
 
     client = Client(api_key=api_key, api_secret=api_secret, testnet=(env == "paper"))
 
