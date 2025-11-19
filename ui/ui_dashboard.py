@@ -643,4 +643,158 @@ elif selected_tab == "청산 분석":
             if sort_key:
                 close_df = close_df.sort_values(by=sort_key, ascending=False, na_position="last")
 
-            pnl_total = float(close_df["realized_pnl_usd
+            pnl_total = float(close_df["realized_pnl_usdt"].sum() or 0)
+            trade_count = len(close_df)
+            avg_pnl = pnl_total / trade_count if trade_count > 0 else 0
+
+            close_df["pnl_color"] = close_df["realized_pnl_usdt"].apply(
+                lambda x: "positive" if x > 0 else ("negative" if x < 0 else "neutral")
+            )
+
+            st.write(f"총 손익: {pnl_total:.2f} USDT")
+            st.write(f"거래 건수: {trade_count}")
+            st.write(f"평균 손익: {avg_pnl:.2f} USDT")
+
+            def plot_close_history(df: pd.DataFrame) -> None:
+                try:
+                    metric_col = "close_price" if "close_price" in df.columns else "realized_pnl_usdt"
+                    numeric_series = pd.to_numeric(df.get(metric_col, pd.Series(dtype=float)), errors="coerce")
+                    if numeric_series.isna().all():
+                        st.info("차트에 사용할 가격/손익 데이터가 없어 표만 표시합니다.")
+                        return
+                    price_min = float(numeric_series.min())
+                    price_max = float(numeric_series.max())
+                    price_range = max(price_max - price_min, 1e-6)
+                    price_padding = price_range * 0.1
+
+                    chart = alt.Chart(df).mark_bar().encode(
+                        x=alt.X("closed_ts:T", title="청산 시각"),
+                        y=alt.Y(
+                            "realized_pnl_usdt:Q",
+                            title="실현 손익 (USDT)",
+                            scale=alt.Scale(domain=[price_min - price_padding, price_max + price_padding]),
+                        ),
+                        color=alt.Color(
+                            "pnl_color:N",
+                            title="손익",
+                            scale=alt.Scale(
+                                domain=["positive", "negative", "neutral"],
+                                range=["#2ca02c", "#d62728", "#7f7f7f"],
+                            ),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("closed_ts:T", title="청산 시각"),
+                            alt.Tooltip("symbol:N", title="심볼"),
+                            alt.Tooltip("realized_pnl_usdt:Q", title="실현 손익 (USDT)"),
+                            alt.Tooltip("return_pct:Q", title="수익률 (%)"),
+                        ],
+                    ).properties(
+                        width=alt.Step(80),
+                        height=300,
+                        title="포지션 청산 내역",
+                    ).interactive()
+
+                    st.altair_chart(chart, use_container_width=True)
+                except Exception as e:
+                    st.error(f"차트 생성 오류: {e}")
+
+            plot_close_history(close_df)
+
+            with st.expander("상세 청산 내역", expanded=False):
+                st.dataframe(close_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("청산 분석을 위한 데이터가 없습니다.")
+
+elif selected_tab == "설정":
+    st.subheader("환경 설정")
+
+    def _fetch_config_values() -> Dict[str, str]:
+        try:
+            data = load_config()
+            return {k: v for k, v in data.values.items() if k in EDITABLE_KEYS}
+        except Exception as exc:
+            st.error(f"환경 설정을 불러오지 못했습니다: {exc}")
+            return {}
+
+    def _persist_config_updates(updates: Dict[str, Any]) -> None:
+        str_values = {k: str(v) for k, v in updates.items()}
+        try:
+            save_config(str_values)
+            st.success("환경 설정이 업데이트되었습니다.")
+            _rerun_app()
+        except Exception as exc:
+            st.error(f"환경 설정 저장 실패: {exc}")
+
+    editable_data = _fetch_config_values()
+    ordered_keys = [k for k in EDITABLE_KEYS if k in editable_data]
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.write("### 현재 설정 값")
+        if not ordered_keys:
+            st.info("표시할 설정 값이 없습니다.")
+        for key in ordered_keys:
+            value = editable_data[key]
+            normalized_value = str(value).lower()
+            input_key = f"config_{key}"
+            meta = ENV_FIELD_INFO.get(key, {"label": key, "description": key})
+            label = f"{meta['label']} ({key})"
+            if key in BOOL_KEYS:
+                current = normalized_value in ("true", "1", "yes")
+                new_val = st.checkbox(label, value=current, key=input_key)
+                if new_val != current:
+                    _persist_config_updates({key: new_val})
+            elif key in FLOAT_KEYS:
+                new_val = st.number_input(label, value=float(value), format="%.8f", key=input_key)
+                if new_val != float(value):
+                    _persist_config_updates({key: new_val})
+            elif key in INT_KEYS:
+                new_val = st.number_input(label, value=int(value), format="%d", key=input_key)
+                if new_val != int(value):
+                    _persist_config_updates({key: new_val})
+            else:
+                new_val = st.text_input(label, value=str(value), key=input_key)
+                if new_val != str(value):
+                    _persist_config_updates({key: new_val})
+
+    with col2:
+        st.write("### .env 파일 관리")
+        if RUNNING_ON_CLOUD:
+            st.caption("Cloud Run에서는 Secret Manager를 통해 설정이 관리됩니다.")
+
+        def _download_env_file() -> str:
+            if ENV_PATH.exists():
+                return ENV_PATH.read_text(encoding="utf-8")
+            st.warning(".env 파일을 찾을 수 없습니다.")
+            return ""
+
+        def _upload_env_file(uploaded_file: Any) -> None:
+            if uploaded_file is None:
+                st.warning("업로드할 .env 파일을 선택하세요.")
+                return
+            content = uploaded_file.read().decode("utf-8")
+            updates: Dict[str, str] = {}
+            for line in content.splitlines():
+                if not line or line.strip().startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                if k in EDITABLE_KEYS:
+                    updates[k] = v.strip()
+            if not updates:
+                st.warning("적용할 항목이 없습니다.")
+                return
+            try:
+                save_config(updates)
+                st.success(".env 파일이 반영되었습니다.")
+                _rerun_app()
+            except Exception as exc:
+                st.error(f"설정 업로드 실패: {exc}")
+
+        if st.button(".env 내용 보기"):
+            text = _download_env_file()
+            if text:
+                st.code(text, language="bash")
+        uploaded_file = st.file_uploader(".env 업로드", type="env")
+        if st.button("업로드 적용"):
+            _upload_env_file(uploaded_file)
