@@ -10,6 +10,7 @@ REGION=${REGION:-asia-northeast3}
 SERVICE=${SERVICE:-auto-futures}
 IMAGE_NAME=${IMAGE_NAME:-auto-futures}
 IMAGE=${IMAGE:-"asia-northeast3-docker.pkg.dev/${PROJECT_ID}/auto-futures/${IMAGE_NAME}"}
+BUILD_CONFIG=${BUILD_CONFIG:-cloudbuild.yaml}
 MEMORY=${MEMORY:-1Gi}
 CPU=${CPU:-1}
 MAX_INSTANCES=${MAX_INSTANCES:-1}
@@ -57,11 +58,20 @@ main() {
 
   echo "[STEP] Building container image ${IMAGE}"
   detect_build_logging_support
-  if [[ "$SUPPORTS_BUILD_LOGGING_FLAG" == "yes" ]]; then
-    gcloud builds submit --tag "$IMAGE" --logging="$BUILD_LOGGING"
+  if [[ -f "$BUILD_CONFIG" ]]; then
+    if [[ "$SUPPORTS_BUILD_LOGGING_FLAG" == "yes" ]]; then
+      gcloud builds submit --config "$BUILD_CONFIG" --substitutions=_IMAGE="$IMAGE" --logging="$BUILD_LOGGING"
+    else
+      echo "[INFO] gcloud builds submit --logging not supported on this version; using default logging behavior"
+      gcloud builds submit --config "$BUILD_CONFIG" --substitutions=_IMAGE="$IMAGE"
+    fi
   else
-    echo "[INFO] gcloud builds submit --logging not supported on this version; using default logging behavior"
-    gcloud builds submit --tag "$IMAGE"
+    if [[ "$SUPPORTS_BUILD_LOGGING_FLAG" == "yes" ]]; then
+      gcloud builds submit --tag "$IMAGE" --logging="$BUILD_LOGGING"
+    else
+      echo "[INFO] gcloud builds submit --logging not supported on this version; using default logging behavior"
+      gcloud builds submit --tag "$IMAGE"
+    fi
   fi
 
   ensure_secret binance-testnet-api-key
