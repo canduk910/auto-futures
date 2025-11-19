@@ -10,7 +10,6 @@ import streamlit as st
 from dotenv import dotenv_values, set_key
 import time
 import os
-from config_store import load_config, save_config
 
 try:
     from streamlit_autorefresh import st_autorefresh as _autorefresh_component  # type: ignore
@@ -38,8 +37,12 @@ def _render_autorefresh(interval_seconds: int, label: str) -> None:
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
+PROJECT_ROOT = CURRENT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from status_store import read_status, read_ai_history, read_close_history  # noqa: E402
+from config_store import load_config, save_config  # noqa: E402
 
 st.set_page_config(page_title="자동 암호화폐 트레이딩", layout="wide")
 
@@ -645,11 +648,11 @@ elif selected_tab == "청산 분석":
             avg_pnl = pnl_total / trade_count if trade_count > 0 else 0
 
             close_df["cumulative_pnl"] = close_df["realized_pnl_usdt"].cumsum()
-            close_df["entry_price"] = pd.to_numeric(close_df["entry_price"], errors="coerce")
-            close_df["close_price"] = pd.to_numeric(close_df["close_price"], errors="coerce")
-            close_df["position_size"] = pd.to_numeric(close_df["position_size"], errors="coerce")
+            for numeric_col in ("entry_price", "close_price", "position_size"):
+                if numeric_col in close_df.columns:
+                    close_df[numeric_col] = pd.to_numeric(close_df[numeric_col], errors="coerce")
 
-            display_df = close_df.rename(columns={
+            rename_map = {
                 "symbol": "심볼",
                 "side": "방향",
                 "entry_price": "진입가",
@@ -658,7 +661,9 @@ elif selected_tab == "청산 분석":
                 "return_pct": "수익률(%)",
                 "cumulative_pnl": "누적 손익",
                 "position_size": "포지션 규모",
-            })
+            }
+            actual_rename = {k: v for k, v in rename_map.items() if k in close_df.columns}
+            display_df = close_df.rename(columns=actual_rename)
 
             cols_to_show = [c for c in [
                 "심볼",
@@ -669,7 +674,7 @@ elif selected_tab == "청산 분석":
                 "수익률(%)",
                 "누적 손익",
                 "포지션 규모",
-            ] if c in display_df.columns]
+             ] if c in display_df.columns]
             st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
 
             st.markdown(f"### 요약 통계")
@@ -782,4 +787,3 @@ elif selected_tab == "설정":
         uploaded_file = st.file_uploader("업로드할 .env 파일 선택", type="env")
         if st.button("업로드"):
             upload_env_file(uploaded_file)
-

@@ -1,6 +1,6 @@
-ㅔ #!/usr/bin/env python3
-"""Central configuration storage helpers for local and Cloud Run deployments."""
 from __future__ import annotations
+#!/usr/bin/env python3
+"""Central configuration storage helpers for local and Cloud Run deployments."""
 
 import json
 import os
