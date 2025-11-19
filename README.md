@@ -132,7 +132,43 @@ USE_QUOTE_VOLUME=true
 
 필요 시 `docs/architecture.md`의 체크리스트를 참고해 운영 환경 값을 조정하세요.
 
-## 9. Google Cloud Run 준비 작업
+## 9. OpenAI JSON 입출력 구조
+OpenAI 호출(`call_openai.py`)은 입력 JSON을 시스템 프롬프트와 함께 전달하고, 모델이 동일한 스키마로 응답하도록 강제합니다. 아래 표를 참고해 필수 필드를 맞춰 주세요.
+
+**입력 JSON 주요 필드**
+
+| 필드 | 설명 |
+| --- | --- |
+| `symbol`, `env`, `constraints` | 거래 심볼, 실행 환경(paper/live), 제약 조건(금지 시간 등) |
+| `market.snapshots` | 마크프라이스, 캔들, 거래량 등 실시간 시세 스냅샷 |
+| `indicators` | `tech_indicators.py`에서 계산한 기술 지표 모음 |
+| `account` | 계정 잔고, 포지션, 사용 가능 마진 등 상태 정보 |
+| `orders`, `positions` | 미체결 주문과 포지션 내역(WS/REST 기반) |
+| `risk_limits` | 계정/전략별 손실 한도, 레버리지 한계 값 |
+
+**출력 JSON 스키마 요약**
+
+| 필드 | 설명 |
+| --- | --- |
+| `decision` | `long`/`short`/`flat` 중 하나의 최종 판단 |
+| `timeframe` | `scalp`/`intraday`/`swing` 등 권장 보유 기간 |
+| `rationale` | 진입 근거, 시장 해석, 위험 요약 |
+| `position.entry` | 주문 유형(`limit`/`market`), 진입가, 스케일 인 전략 |
+| `position.size` | 계약 수량, 사용 레버리지, 증거금, 리스크 비율 |
+| `position.stop_loss` | 마크/라스트 기준 손절 위치 및 사유 |
+| `position.take_profits` | 목표가 리스트(가격 + 청산 비율) |
+| `position.trailing_stop` | 추적 손절 활성화 가격과 콜백 비율 |
+| `position.expected_fees` | 진입/청산/펀딩 비용 추정 |
+| `position.estimated_liquidation_price` | 예상 청산가 또는 추정치 |
+| `risk` | R-multiple, 상방 확률, 최대 손실(금액/%) 등 |
+| `scenarios` | bull/base/bear 시나리오 요약 |
+| `invalidations` | 전략이 무효화되는 조건 목록 |
+| `confidence` | 0~1 사이 신뢰도 스코어 |
+| `next_check_after_min` | 다음 점검까지 대기 시간(분) |
+| `compliance.reason_codes` | 내부 검증 코드(예: `RISK_OK`) |
+| `notes` | 면책 문구 및 추가 메모 |
+
+## 10. 클라우드 배포 가이드
 1. Docker 이미지 빌드 (로컬 테스트 권장):
    ```bash
    docker build -t auto-futures:local .
@@ -167,8 +203,67 @@ USE_QUOTE_VOLUME=true
      --no-allow-unauthenticated
    ```
 5. 필요 시 Streamlit UI를 별도 서비스로 배포하거나 Cloud Run Jobs를 사용해 백오피스 배치를 실행하세요.
+6. CLI 스크립트 활용: 프로젝트 루트의 `scripts/cloud_run_deploy.sh`는 컨테이너 빌드부터 배포, 환경 변수/시크릿 설정까지 자동화합니다.
+   ```bash
+   cd /Users/koscom/Projects/auto-futures
+   PROJECT_ID=<YOUR_GCP_PROJECT> REGION=asia-northeast3 SERVICE=auto-futures ./scripts/cloud_run_deploy.sh
+   ```
+   Secrets(`binance-testnet-api-key`, `binance-testnet-secret-key`, `openai-api-key`)가 미리 생성되어 있어야 하며, 없으면 스크립트가 경고를 출력합니다.
+7. IAM/Artifact Registry 선행 작업: Cloud Build/Compute 기본 서비스 계정이이미지를 푸시하려면 Artifact Registry 쓰기 권한과 GCS object 권한이 필요합니다. 프로젝트 번호가 `216337086276`이라면 다음 명령을 한 번 실행하세요.
+   ```bash
+   PROJECT_ID=<YOUR_GCP_PROJECT>
+   PROJECT_NUMBER=216337086276
 
-## 10. 참고 문서
+   gcloud projects add-iam-policy-binding $PROJECT_ID \
+     --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+     --role="roles/artifactregistry.writer"
+
+   gcloud projects add-iam-policy-binding $PROJECT_ID \
+     --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+     --role="roles/artifactregistry.writer"
+
+   gcloud projects add-iam-policy-binding $PROJECT_ID \
+     --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+     --role="roles/storage.objectAdmin"
+   ```
+   또한 Artifact Registry를 사전 생성해야 합니다.
+   ```bash
+   gcloud artifacts repositories create auto-futures \
+     --repository-format=docker \
+     --location=asia-northeast3 \
+     --project $PROJECT_ID
+   ```
+   API(`artifactregistry.googleapis.com`, `containerregistry.googleapis.com`, `cloudbuild.googleapis.com`, `secretmanager.googleapis.com`)를 활성화한 뒤 배포 스크립트를 실행하면 권한 오류 없이 진행됩니다.
+8. gcr.io 대신 Artifact Registry 경로 사용: `gcr.io/PROJECT_ID/...` 레포는 기본적으로 존재하지 않으며, create-on-push 권한이 없다면 Cloud Build가 반복 실패합니다. 권장 방법은 Artifact Registry 경로를 직접 지정하는 것입니다.
+   1) 위 7번 단계에서 레포(`auto-futures`)를 만들었다면 `scripts/cloud_run_deploy.sh`의 `IMAGE` 값을 아래처럼 바꿉니다.
+      ```bash
+      IMAGE="asia-northeast3-docker.pkg.dev/${PROJECT_ID}/auto-futures/auto-futures"
+      ```
+   2) gcr.io를 계속 쓰려면 Container Registry 버킷을 직접 생성하고(예: `gsutil mb -p $PROJECT_ID gs://artifacts.$PROJECT_ID.appspot.com`) 동일한 서비스 계정에 `roles/storage.objectAdmin` 권한을 부여해야 합니다.
+   3) 배포 로그에 `denied: gcr.io repo does not exist`가 보이면 이 단계가 누락된 것이므로 IAM/레포 설정 후 `PROJECT_ID=... ./scripts/cloud_run_deploy.sh`를 다시 실행합니다.
+9. Secret Manager 권한 부여: Cloud Run 리비전이 비밀을 읽으려면 실행 SA(기본값: `${PROJECT_NUMBER}-compute@developer.gserviceaccount.com`)에게 `roles/secretmanager.secretAccessor` 권한이 있어야 합니다.
+   ```bash
+   PROJECT_ID=<YOUR_GCP_PROJECT>
+   PROJECT_NUMBER=<PROJECT_NUMBER>
+   SERVICE_ACCOUNT=${PROJECT_NUMBER}-compute@developer.gserviceaccount.com
+
+   gcloud secrets add-iam-policy-binding binance-testnet-api-key \
+     --member="serviceAccount:${SERVICE_ACCOUNT}" \
+     --role="roles/secretmanager.secretAccessor" \
+     --project $PROJECT_ID
+
+   gcloud secrets add-iam-policy-binding binance-testnet-secret-key \
+     --member="serviceAccount:${SERVICE_ACCOUNT}" \
+     --role="roles/secretmanager.secretAccessor" \
+     --project $PROJECT_ID
+
+   gcloud secrets add-iam-policy-binding openai-api-key \
+     --member="serviceAccount:${SERVICE_ACCOUNT}" \
+     --role="roles/secretmanager.secretAccessor" \
+     --project $PROJECT_ID
+   ```
+   프로젝트 전체에 동일 권한을 주려면 `gcloud projects add-iam-policy-binding ... --role roles/secretmanager.secretAccessor`를 사용하세요. 권한이 없으면 `spec.template...Permission denied on secret` 오류가 발생합니다.
+## 11. 참고 문서
 - `docs/architecture.md`: 더 자세한 구조, 이벤트 플로우, Pub/Sub 설계 및 배포 체크리스트가 수록되어 있습니다.
 
 Auto-Futures는 실험용 코드로 제공되며, 실거래에 사용하기 전에 반드시 시뮬레이션과 리스크 검증을 진행하세요.
