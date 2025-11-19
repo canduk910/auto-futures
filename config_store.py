@@ -76,6 +76,19 @@ def _load_from_secret_manager() -> ConfigData:
     resource = _secret_resource_name()
     try:
         response = client.access_secret_version(name=f"{resource}/versions/latest")
+    except gcloud_exceptions.NotFound:
+        logging.warning("Secret %s 이 없어 새로 생성합니다.", resource)
+        parent = resource.split("/secrets/")[0]
+        client.create_secret(
+            parent=parent,
+            secret_id=CONFIG_SECRET_NAME,
+            secret={"replication": {"automatic": {}}},
+        )
+        client.add_secret_version(
+            parent=resource,
+            payload={"data": json.dumps({}, ensure_ascii=False).encode("utf-8")},
+        )
+        return ConfigData(values={}, source="secret_manager")
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(f"Secret Manager 값 조회 실패: {exc}") from exc
     payload = response.payload.data.decode("utf-8")
