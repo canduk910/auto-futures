@@ -20,6 +20,10 @@ except Exception:  # pragma: no cover
 
 ENV_FILE_PATH = Path(__file__).resolve().parent / ".env"
 CONFIG_SECRET_NAME = os.getenv("CONFIG_SECRET_NAME", "auto-futures-config")
+# Runtime env is used as a last resort fallback (e.g., Cloud Run env vars)
+def _runtime_env_values() -> Dict[str, str]:
+    return {k: str(v) for k, v in os.environ.items() if v is not None}
+
 def _get_project_id() -> str:
     return os.getenv("PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
 
@@ -98,17 +102,38 @@ def _load_from_secret_manager() -> ConfigData:
             raise ValueError("config payload must be a JSON object")
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(f"Secret Manager payload 파싱 실패: {exc}") from exc
-    return ConfigData(values={k: str(v) for k, v in values.items()}, source="secret_manager")
+    stringified = {k: str(v) for k, v in values.items()}
+    if not stringified:
+        env_values = _runtime_env_values()
+        if env_values:
+            logging.info("Secret %s 값이 비어 있어 런타임 환경에서 초기값을 채웁니다.", resource)
+            _write_secret_payload(client, resource, env_values)
+            return ConfigData(values=env_values, source="secret_manager_seeded")
+    return ConfigData(values=stringified, source="secret_manager")
+
+
+def _write_secret_payload(client: Any, resource: str, values: Dict[str, str]) -> None:
+    payload = json.dumps(values, ensure_ascii=False).encode("utf-8")
+    client.add_secret_version(parent=resource, payload={"data": payload})
 
 
 def load_config() -> ConfigData:
     if _is_cloud_run():
         if not _get_project_id():
             logging.warning("PROJECT_ID가 설정되지 않아 Secret Manager를 사용할 수 없습니다. .env로 폴백합니다.")
-            if not ENV_FILE_PATH.exists():
-                return ConfigData(values={}, source="missing_env_file")
-            return _load_from_env_file()
-        return _load_from_secret_manager()
+            if ENV_FILE_PATH.exists():
+                return _load_from_env_file()
+            runtime_values = _runtime_env_values()
+            return ConfigData(values=runtime_values, source="runtime_env")
+        try:
+            return _load_from_secret_manager()
+        except RuntimeError as exc:
+            if str(exc) == "secret_manager_permission_denied":
+                if ENV_FILE_PATH.exists():
+                    return _load_from_env_file()
+                runtime_values = _runtime_env_values()
+                return ConfigData(values=runtime_values, source="runtime_env_permission_fallback")
+            raise
     if not ENV_FILE_PATH.exists():
         return ConfigData(values={}, source="missing_env_file")
     return _load_from_env_file()
@@ -145,19 +170,16 @@ def _save_via_secret_manager(updates: Dict[str, str]) -> Tuple[ConfigData, str]:
         current = {}
 
     current.update(updates)
-    payload = json.dumps(current, ensure_ascii=False)
-
     try:
-        client.add_secret_version(
-            parent=resource,
-            payload={"data": payload.encode("utf-8")},
-        )
+        _write_secret_payload(client, resource, current)
     except gcloud_exceptions.NotFound:
         resource = _ensure_secret_exists(client)
-        client.add_secret_version(
-            parent=resource,
-            payload={"data": payload.encode("utf-8")},
-        )
+        _write_secret_payload(client, resource, current)
+    except gcloud_exceptions.PermissionDenied as exc:  # pragma: no cover
+        logging.error("Secret Manager 쓰기 권한이 없어 .env로 폴백합니다: %s", exc)
+        if ENV_FILE_PATH.exists():
+            return _save_via_env_file(updates)
+        raise RuntimeError("secret_manager_permission_denied") from exc
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(f"Secret Manager 업데이트 실패: {exc}") from exc
 
