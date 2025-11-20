@@ -18,7 +18,9 @@ RUN pip install --upgrade pip \
 
 COPY . .
 
-# Drop root for Cloud Run best practice
+RUN mkdir -p /app/.streamlit && \
+    if [ -d .streamlit ]; then cp -r .streamlit /app/; fi
+
 RUN useradd --create-home trader \
     && chown -R trader:trader /app
 USER trader
