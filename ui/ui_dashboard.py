@@ -631,77 +631,142 @@ elif selected_tab == "청산 분석":
         if close_df.empty:
             st.info("청산 내역이 아직 없습니다.")
         else:
-            if "realized_pnl_usdt" not in close_df.columns:
-                close_df["realized_pnl_usdt"] = pd.NA
-            if "return_pct" not in close_df.columns:
-                close_df["return_pct"] = pd.NA
-
-            close_df["realized_pnl_usdt"] = pd.to_numeric(close_df["realized_pnl_usdt"], errors="coerce")
-            close_df["return_pct"] = pd.to_numeric(close_df["return_pct"], errors="coerce")
+            numeric_columns = {
+                "realized_pnl_usdt": "USDT 손익",
+                "return_pct": "수익률",
+                "qty": "수량",
+                "entry_price": "진입가",
+                "exit_price": "청산가",
+            }
+            for col in numeric_columns:
+                if col not in close_df.columns:
+                    close_df[col] = pd.NA
+                close_df[col] = pd.to_numeric(close_df[col], errors="coerce")
 
             sort_key = "closed_ts" if "closed_ts" in close_df.columns else ("ts" if "ts" in close_df.columns else None)
             if sort_key:
-                close_df = close_df.sort_values(by=sort_key, ascending=False, na_position="last")
+                close_df = close_df.sort_values(by=sort_key, ascending=True, na_position="last")
 
-            pnl_total = float(close_df["realized_pnl_usdt"].sum() or 0)
-            trade_count = len(close_df)
-            avg_pnl = pnl_total / trade_count if trade_count > 0 else 0
+            pnl_total = float(close_df["realized_pnl_usdt"].sum(skipna=True))
+            trade_count = int(close_df["realized_pnl_usdt"].notna().sum())
+            win_rate = (
+                close_df["realized_pnl_usdt"].gt(0).mean() * 100.0
+                if trade_count > 0
+                else 0.0
+            )
+            avg_return_pct = (
+                float(close_df["return_pct"].mean(skipna=True))
+                if close_df["return_pct"].notna().any()
+                else 0.0
+            )
 
             close_df["pnl_color"] = close_df["realized_pnl_usdt"].apply(
                 lambda x: "positive" if x > 0 else ("negative" if x < 0 else "neutral")
             )
 
-            st.write(f"총 손익: {pnl_total:.2f} USDT")
-            st.write(f"거래 건수: {trade_count}")
-            st.write(f"평균 손익: {avg_pnl:.2f} USDT")
+            metrics_col, chart_col = st.columns([1, 2], gap="large")
+            with metrics_col:
+                st.metric("총 손익 (USDT)", f"{pnl_total:,.2f}")
+                st.metric("거래 건수", trade_count)
+                st.metric("승률", f"{win_rate:,.1f}%")
+                st.metric("평균 수익률", f"{avg_return_pct:,.2f}%")
+
+            def _ensure_datetime(series: pd.Series) -> pd.Series:
+                try:
+                    return pd.to_datetime(series, unit="s", errors="coerce")
+                except Exception:
+                    return pd.to_datetime(series, errors="coerce")
+
+            time_col = sort_key or "ts"
+            if time_col in close_df.columns:
+                close_df["closed_ts_dt"] = _ensure_datetime(close_df[time_col])
+            else:
+                close_df["closed_ts_dt"] = pd.NaT
+
+            close_df["cumulative_pnl"] = close_df["realized_pnl_usdt"].fillna(0).cumsum()
 
             def plot_close_history(df: pd.DataFrame) -> None:
-                try:
-                    metric_col = "close_price" if "close_price" in df.columns else "realized_pnl_usdt"
-                    numeric_series = pd.to_numeric(df.get(metric_col, pd.Series(dtype=float)), errors="coerce")
-                    if numeric_series.isna().all():
-                        st.info("차트에 사용할 가격/손익 데이터가 없어 표만 표시합니다.")
-                        return
-                    price_min = float(numeric_series.min())
-                    price_max = float(numeric_series.max())
-                    price_range = max(price_max - price_min, 1e-6)
-                    price_padding = price_range * 0.1
-
-                    chart = alt.Chart(df).mark_bar().encode(
-                        x=alt.X("closed_ts:T", title="청산 시각"),
-                        y=alt.Y(
-                            "realized_pnl_usdt:Q",
-                            title="실현 손익 (USDT)",
-                            scale=alt.Scale(domain=[price_min - price_padding, price_max + price_padding]),
+                valid_rows = df.dropna(subset=["closed_ts_dt"])
+                if valid_rows.empty:
+                    st.info("차트에 사용할 청산 시각 정보가 없습니다.")
+                    return
+                pnl_chart = alt.Chart(valid_rows).mark_bar().encode(
+                    x=alt.X("closed_ts_dt:T", title="청산 시각"),
+                    y=alt.Y("realized_pnl_usdt:Q", title="실현 손익 (USDT)"),
+                    color=alt.Color(
+                        "pnl_color:N",
+                        title="손익",
+                        scale=alt.Scale(
+                            domain=["positive", "negative", "neutral"],
+                            range=["#22c55e", "#ef4444", "#9ca3af"],
                         ),
-                        color=alt.Color(
-                            "pnl_color:N",
-                            title="손익",
-                            scale=alt.Scale(
-                                domain=["positive", "negative", "neutral"],
-                                range=["#2ca02c", "#d62728", "#7f7f7f"],
-                            ),
-                        ),
-                        tooltip=[
-                            alt.Tooltip("closed_ts:T", title="청산 시각"),
-                            alt.Tooltip("symbol:N", title="심볼"),
-                            alt.Tooltip("realized_pnl_usdt:Q", title="실현 손익 (USDT)"),
-                            alt.Tooltip("return_pct:Q", title="수익률 (%)"),
-                        ],
-                    ).properties(
-                        width=alt.Step(80),
-                        height=300,
-                        title="포지션 청산 내역",
-                    ).interactive()
+                    ),
+                    tooltip=[
+                        alt.Tooltip("closed_ts_dt:T", title="청산 시각"),
+                        alt.Tooltip("symbol:N", title="심볼"),
+                        alt.Tooltip("realized_pnl_usdt:Q", title="실현 손익 (USDT)", format=".2f"),
+                        alt.Tooltip("return_pct:Q", title="수익률 (%)", format=".2f"),
+                        alt.Tooltip("qty:Q", title="수량"),
+                    ],
+                ).properties(height=260, title="포지션별 실현 손익")
 
-                    st.altair_chart(chart, use_container_width=True)
-                except Exception as e:
-                    st.error(f"차트 생성 오류: {e}")
+                cum_chart = alt.Chart(valid_rows).mark_line(point=True).encode(
+                    x=alt.X("closed_ts_dt:T", title="청산 시각"),
+                    y=alt.Y("cumulative_pnl:Q", title="누적 손익 (USDT)"),
+                    tooltip=[
+                        alt.Tooltip("closed_ts_dt:T", title="청산 시각"),
+                        alt.Tooltip("cumulative_pnl:Q", title="누적 손익", format=".2f"),
+                    ],
+                ).properties(height=200, title="누적 손익 추이")
+
+                st.altair_chart((pnl_chart & cum_chart), use_container_width=True)
 
             plot_close_history(close_df)
 
+            if {"entry_price", "exit_price"}.issubset(close_df.columns):
+                price_rows = close_df.dropna(subset=["entry_price", "exit_price", "closed_ts_dt"])
+                if not price_rows.empty:
+                    melted = price_rows.melt(
+                        id_vars=["closed_ts_dt", "symbol"],
+                        value_vars=["entry_price", "exit_price"],
+                        var_name="price_type",
+                        value_name="price",
+                    )
+                    price_chart = alt.Chart(melted).mark_line(point=True).encode(
+                        x=alt.X("closed_ts_dt:T", title="청산 시각"),
+                        y=alt.Y("price:Q", title="가격"),
+                        color=alt.Color(
+                            "price_type:N",
+                            title="가격 유형",
+                            scale=alt.Scale(domain=["entry_price", "exit_price"], range=["#6366f1", "#ec4899"]),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("closed_ts_dt:T", title="청산 시각"),
+                            alt.Tooltip("symbol:N", title="심볼"),
+                            alt.Tooltip("price_type:N", title="유형"),
+                            alt.Tooltip("price:Q", title="가격", format=".2f"),
+                        ],
+                    ).properties(height=240, title="진입/청산가 추이")
+                    st.altair_chart(price_chart, use_container_width=True)
+
             with st.expander("상세 청산 내역", expanded=False):
-                st.dataframe(close_df, use_container_width=True, hide_index=True)
+                display_cols = [
+                    "closed_ts_dt",
+                    "symbol",
+                    "side",
+                    "qty",
+                    "entry_price",
+                    "exit_price",
+                    "realized_pnl_usdt",
+                    "return_pct",
+                    "decision",
+                    "confidence",
+                    "status",
+                ]
+                extra_cols = [col for col in close_df.columns if col not in display_cols and col != "pnl_color"]
+                final_cols = [col for col in display_cols if col in close_df.columns]
+                final_cols.extend(extra_cols)
+                st.dataframe(close_df[final_cols], use_container_width=True, hide_index=True)
     else:
         st.info("청산 분석을 위한 데이터가 없습니다.")
 

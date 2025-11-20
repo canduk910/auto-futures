@@ -5,6 +5,16 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$REPO_ROOT"
 
+ENV_FILE=${ENV_FILE:-.env}
+LOAD_ENV_FILE=${LOAD_ENV_FILE:-true}
+if [[ "$LOAD_ENV_FILE" == "true" && -f "$ENV_FILE" ]]; then
+  echo "[STEP] Loading environment variables from $ENV_FILE"
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
 PROJECT_ID=${PROJECT_ID:?"set PROJECT_ID environment variable (e.g., PROJECT_ID=my-project)"}
 REGION=${REGION:-asia-northeast3}
 SERVICE=${SERVICE:-auto-futures}
@@ -19,6 +29,9 @@ BUILD_LOGGING=${BUILD_LOGGING:-cloud-logging-only}
 GRANT_SECRET_ROLES=${GRANT_SECRET_ROLES:-true}
 SECRET_ROLE=${SECRET_ROLE:-roles/secretmanager.admin}
 SUPPORTS_BUILD_LOGGING_FLAG=""
+SYNC_RUNTIME=${SYNC_RUNTIME:-false}
+SYNC_MODE=${SYNC_MODE:-upload}
+GCS_BUCKET=${GCS_BUCKET:-}
 
 ensure_secret() {
   local secret="$1"
@@ -51,8 +64,24 @@ maybe_grant_secret_roles() {
     --role="$SECRET_ROLE" >/dev/null
 }
 
+sync_runtime_data() {
+  [[ "$SYNC_RUNTIME" == "true" ]] || return 0
+  if [[ -z "$GCS_BUCKET" ]]; then
+    echo "[WARN] SYNC_RUNTIME=true지만 GCS_BUCKET이 설정되지 않았습니다. runtime 동기화를 건너뜁니다." >&2
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "[WARN] python3를 찾을 수 없어 runtime 동기화를 건너뜁니다." >&2
+    return 0
+  fi
+  echo "[STEP] Running runtime sync (${SYNC_MODE}) with bucket ${GCS_BUCKET}"
+  python3 scripts/gcs_sync.py "$SYNC_MODE" --bucket "$GCS_BUCKET" || echo "[WARN] runtime 동기화 실패 (무시하고 계속 진행)" >&2
+}
+
 main() {
   gcloud config set project "$PROJECT_ID" >/dev/null
+
+  sync_runtime_data
 
   maybe_grant_secret_roles
 

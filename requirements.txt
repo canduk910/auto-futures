@@ -10,3 +10,4 @@ streamlit
 streamlit-autorefresh
 altair
 google-cloud-secret-manager
+google-cloud-storage

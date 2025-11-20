@@ -116,7 +116,7 @@ WS_TRACE=true           # 웹소켓 디버그 트레이스 출력 여부
 
 # Loop/runner options
 LOOP_ENABLE=true
-LOOP_TRIGGER=event        # kline | timer | event
+LOOP_TRIGGER=event        # kline  timer  event
 LOOP_INTERVAL_SEC=60
 LOOP_COOLDOWN_SEC=8
 LOOP_BACKOFF_MAX_SEC=30
@@ -209,7 +209,7 @@ OpenAI 호출(`call_openai.py`)은 입력 JSON을 시스템 프롬프트와 함�
    PROJECT_ID=<YOUR_GCP_PROJECT> REGION=asia-northeast3 SERVICE=auto-futures ./scripts/cloud_run_deploy.sh
    ```
    Secrets(`binance-testnet-api-key`, `binance-testnet-secret-key`, `openai-api-key`)가 미리 생성되어 있어야 하며, 없으면 스크립트가 경고를 출력합니다.
-7. IAM/Artifact Registry 선행 작업: Cloud Build/Compute 기본 서비스 계정이이미지를 푸시하려면 Artifact Registry 쓰기 권한과 GCS object 권한이 필요합니다. 프로젝트 번호가 `216337086276`이라면 다음 명령을 한 번 실행하세요.
+7. IAM/Artifact Registry 선행 작업: Cloud Build/Compute 기본 서비스 계정이 이미지를 푸시하려면 Artifact Registry 쓰기 권한과 GCS object 권한이 필요합니다. 프로젝트 번호가 `216337086276`이라면 다음 명령을 한 번 실행하세요.
    ```bash
    PROJECT_ID=<YOUR_GCP_PROJECT>
    PROJECT_NUMBER=216337086276
@@ -263,7 +263,45 @@ OpenAI 호출(`call_openai.py`)은 입력 JSON을 시스템 프롬프트와 함�
      --project $PROJECT_ID
    ```
    프로젝트 전체에 동일 권한을 주려면 `gcloud projects add-iam-policy-binding ... --role roles/secretmanager.secretAccessor`를 사용하세요. 권한이 없으면 `spec.template...Permission denied on secret` 오류가 발생합니다.
+
 ## 11. 참고 문서
 - `docs/architecture.md`: 더 자세한 구조, 이벤트 플로우, Pub/Sub 설계 및 배포 체크리스트가 수록되어 있습니다.
 
 Auto-Futures는 실험용 코드로 제공되며, 실거래에 사용하기 전에 반드시 시뮬레이션과 리스크 검증을 진행하세요.
+
+## 12. 런타임 데이터 영구보존
+이 서비스는 `runtime/` 디렉터리에 AI 자문, 거래/청산 내역을 JSONL 형태로 쌓습니다. Cloud Run처럼 휘발성 컨테이너 환경에서는 재시작 시 이 파일들이 사라지므로, GCS 버킷으로 주기적으로 백업/복원하는 절차를 함께 운영하세요.
+
+### 12.1 GCS 동기화 스크립트
+`scripts/gcs_sync.py`는 `runtime/**/*.jsonl|json|ndjson` 파일을 GCS 버킷과 동기화합니다. 실행 전 `pip install google-cloud-storage`로 의존성을 추가하세요.
+
+환경 변수:
+- `GCS_BUCKET` (또는 `BUCKET_NAME`): 대상 버킷 이름
+
+사용 예시:
+```bash
+# 종료 직전에 백업
+GCS_BUCKET=my-bucket python3 scripts/gcs_sync.py upload
+
+# 기동 직후 복원
+GCS_BUCKET=my-bucket python3 scripts/gcs_sync.py download
+```
+
+### 12.2 자동화 팁
+- Cloud Run 컨테이너의 `docker-entrypoint.sh`에서 기동 시 `download`, 종료 Signal 처리에서 `upload`를 호출하면 무정지로 복원할 수 있습니다.
+- 정기 백업이 필요하면 Cloud Scheduler → Cloud Run Job 조합으로 `upload`를 실행하세요.
+
+### 12.3 권한과 보안
+- 업로드에는 `roles/storage.objectCreator` 이상, 다운로드에는 `roles/storage.objectViewer` 이상 권한이 필요합니다.
+- 서비스 계정 권한 부여 예시:
+  ```bash
+  PROJECT_ID=...
+  SERVICE_ACCOUNT=...@${PROJECT_ID}.iam.gserviceaccount.com
+
+  gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/storage.objectAdmin"
+  ```
+- GCS 버킷에도 수명주기(Lifecycle) 규칙을 설정해 오래된 JSONL을 자동 정리할 수 있습니다.
+
+런타임 데이터를 꾸준히 백업하면 AI 자문 히스토리/체결 로그를 재학습 자료나 감사 목적으로 활용하기 쉬워집니다.
