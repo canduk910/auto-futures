@@ -128,9 +128,25 @@ KLINE_RANGE_PCT=0.6   # 캔들 범위 퍼센트 임계값
 VOL_LOOKBACK=20       # 거래량 조회 기간
 VOL_MULT=3.0          # 거래량 배수 (조회기간의 평균거래량 대비 직전 거래량)
 USE_QUOTE_VOLUME=true
+
+# GCP / Cloud Run 연동
+PROJECT_ID=project-xxxx
+REGION=asia-northeast3
+SERVICE=auto-futures
+SYNC_RUNTIME=true            # 배포 시 runtime 동기화 사용 여부
+SYNC_MODE=download             # upload: 로컬→GCS, download: GCS→로컬
+GCS_BUCKET=auto-futures-runtime
+GCS_PREFIX=runtime/
+RESTORE_RUNTIME=true         # 컨테이너 기동 시 GCS→/app/runtime 다운로드
+UPLOAD_ON_EXIT=true          # 컨테이너 종료 시 runtime→GCS 업로드
+ALLOW_UNAUTH=false
 ```
 
-필요 시 `docs/architecture.md`의 체크리스트를 참고해 운영 환경 값을 조정하세요.
+#### SYNC_MODE / runtime 백업 흐름
+- `SYNC_RUNTIME`가 true이면 `scripts/cloud_run_deploy.sh`가 배포 직전에 `scripts/gcs_sync.py`를 호출합니다. `SYNC_MODE=upload`는 **현재 로컬 `runtime/` → GCS 업로드**, `download`는 그 반대 방향입니다.
+- Cloud Run 컨테이너는 `.env`의 `RESTORE_RUNTIME=true`일 때 `docker-entrypoint.sh`에서 항상 GCS→`/app/runtime` 복원을 시도합니다. 복원 후 UI가 곧바로 최신 히스토리를 읽습니다.
+- `UPLOAD_ON_EXIT=true`로 설정하면 컨테이너가 종료 시점에 `/app/runtime`을 GCS로 업로드합니다(실시간 업로드는 아님). 버킷이 최신 상태여야 이후 기동에서도 동일한 데이터를 재사용할 수 있습니다.
+- 버킷과 prefix는 `GCS_BUCKET`, `GCS_PREFIX`로 제어합니다. 덮어쓰기가 막히는 retention 정책이 있는 경우 새 prefix를 사용하거나 정책을 완화하세요.
 
 ## 9. OpenAI JSON 입출력 구조
 OpenAI 호출(`call_openai.py`)은 입력 JSON을 시스템 프롬프트와 함께 전달하고, 모델이 동일한 스키마로 응답하도록 강제합니다. 아래 표를 참고해 필수 필드를 맞춰 주세요.
