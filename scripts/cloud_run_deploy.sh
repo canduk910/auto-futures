@@ -32,6 +32,7 @@ SUPPORTS_BUILD_LOGGING_FLAG=""
 SYNC_RUNTIME=${SYNC_RUNTIME:-false}
 SYNC_MODE=${SYNC_MODE:-upload}
 GCS_BUCKET=${GCS_BUCKET:-}
+GCS_PREFIX=${GCS_PREFIX:-runtime/}
 
 ensure_secret() {
   local secret="$1"
@@ -64,7 +65,7 @@ maybe_grant_secret_roles() {
     --role="$SECRET_ROLE" >/dev/null
 }
 
-sync_runtime_data() {
+sync_runtime() {
   [[ "$SYNC_RUNTIME" == "true" ]] || return 0
   if [[ -z "$GCS_BUCKET" ]]; then
     echo "[WARN] SYNC_RUNTIME=true지만 GCS_BUCKET이 설정되지 않았습니다. runtime 동기화를 건너뜁니다." >&2
@@ -75,13 +76,17 @@ sync_runtime_data() {
     return 0
   fi
   echo "[STEP] Running runtime sync (${SYNC_MODE}) with bucket ${GCS_BUCKET}"
-  python3 scripts/gcs_sync.py "$SYNC_MODE" --bucket "$GCS_BUCKET" || echo "[WARN] runtime 동기화 실패 (무시하고 계속 진행)" >&2
+  if [[ "$SYNC_MODE" == "upload" ]]; then
+    python3 scripts/gcs_sync.py --bucket "$GCS_BUCKET" "$SYNC_MODE" --dest-prefix "$GCS_PREFIX" || echo "[WARN] runtime 동기화 실패 (무시하고 계속 진행)" >&2
+  else
+    python3 scripts/gcs_sync.py --bucket "$GCS_BUCKET" "$SYNC_MODE" --prefix "$GCS_PREFIX" || echo "[WARN] runtime 동기화 실패 (무시하고 계속 진행)" >&2
+  fi
 }
 
 main() {
   gcloud config set project "$PROJECT_ID" >/dev/null
 
-  sync_runtime_data
+  sync_runtime
 
   maybe_grant_secret_roles
 

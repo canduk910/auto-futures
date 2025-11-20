@@ -370,7 +370,7 @@ if selected_tab == "모니터링":
         df_events = pd.DataFrame(trimmed[::-1])
         if "ts" in df_events.columns:
             df_events["ts"] = df_events["ts"].apply(_format_ts)
-        st.dataframe(df_events, use_container_width=True, hide_index=True)
+        st.dataframe(df_events, width="stretch", hide_index=True)
     else:
         st.info("이벤트 기록이 없습니다.")
 
@@ -420,7 +420,7 @@ elif selected_tab == "AI 자문":
         scenario_df["내용"] = scenario_df["내용"].astype(str)
         st.dataframe(
             scenario_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "시나리오": st.column_config.TextColumn("시나리오", width="small", max_chars=4),
@@ -478,7 +478,7 @@ elif selected_tab == "AI 자문":
                         color=color_scale,
                     ).properties(height=60)
                     combo_chart = alt.vconcat(candle, volume).resolve_scale(x="shared").properties(spacing=8)
-                    chart_container.altair_chart(combo_chart, use_container_width=True)
+                    chart_container.altair_chart(combo_chart, width="stretch")
                 except Exception:
                     chart_container.line_chart(bars_df.set_index("time")["close"], height=280)
             else:
@@ -531,7 +531,7 @@ elif selected_tab == "AI 자문":
                 "손절가",
                 "근거",
             ] if c in display_df.columns]
-            st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
+            st.dataframe(display_df[cols_to_show], width="stretch", hide_index=True)
         else:
             st.info("기록이 비어 있습니다.")
     else:
@@ -580,7 +580,7 @@ elif selected_tab == "거래 내역":
                 "체결시각",
                 "모의주문",
             ] if c in display_df.columns]
-            st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
+            st.dataframe(display_df[cols_to_show], width="stretch", hide_index=True)
             if orders_snapshot_ts:
                 st.caption(f"내역 업데이트 기준 시각: {_format_ts(orders_snapshot_ts)}")
         else:
@@ -615,7 +615,7 @@ elif selected_tab == "거래 내역":
                 "마진모드",
                 "레버리지",
             ] if c in display_df.columns]
-            st.dataframe(display_df[cols_to_show], use_container_width=True, hide_index=True)
+            st.dataframe(display_df[cols_to_show], width="stretch", hide_index=True)
             if positions_snapshot_ts:
                 st.caption(f"포지션 스냅샷 시각: {_format_ts(positions_snapshot_ts)}")
         else:
@@ -719,7 +719,7 @@ elif selected_tab == "청산 분석":
                     ],
                 ).properties(height=200, title="누적 손익 추이")
 
-                st.altair_chart((pnl_chart & cum_chart), use_container_width=True)
+                st.altair_chart((pnl_chart & cum_chart), width="stretch")
 
             plot_close_history(close_df)
 
@@ -747,7 +747,7 @@ elif selected_tab == "청산 분석":
                             alt.Tooltip("price:Q", title="가격", format=".2f"),
                         ],
                     ).properties(height=240, title="진입/청산가 추이")
-                    st.altair_chart(price_chart, use_container_width=True)
+                    st.altair_chart(price_chart, width="stretch")
 
             with st.expander("상세 청산 내역", expanded=False):
                 display_cols = [
@@ -766,7 +766,7 @@ elif selected_tab == "청산 분석":
                 extra_cols = [col for col in close_df.columns if col not in display_cols and col != "pnl_color"]
                 final_cols = [col for col in display_cols if col in close_df.columns]
                 final_cols.extend(extra_cols)
-                st.dataframe(close_df[final_cols], use_container_width=True, hide_index=True)
+                st.dataframe(close_df[final_cols], width="stretch", hide_index=True)
     else:
         st.info("청산 분석을 위한 데이터가 없습니다.")
 

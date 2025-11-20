@@ -305,3 +305,39 @@ GCS_BUCKET=my-bucket python3 scripts/gcs_sync.py download
 - GCS 버킷에도 수명주기(Lifecycle) 규칙을 설정해 오래된 JSONL을 자동 정리할 수 있습니다.
 
 런타임 데이터를 꾸준히 백업하면 AI 자문 히스토리/체결 로그를 재학습 자료나 감사 목적으로 활용하기 쉬워집니다.
+
+### 12.4 버킷 생성 및 권한 부여 절차
+1. **Artifact/런타임 백업용 버킷 생성**
+   ```bash
+   PROJECT_ID=<YOUR_GCP_PROJECT>
+   BUCKET=auto-futures-runtime
+   gcloud storage buckets create gs://${BUCKET} \
+     --project=${PROJECT_ID} \
+     --location=asia-northeast3 \
+     --uniform-bucket-level-access
+   ```
+   - 지역은 Cloud Run 서비스와 동일하게 맞추는 것이 네트워크 지연 관점에서 유리합니다.
+   - 기존에 보존 정책(retention policy)이 적용돼 있다면 업로드 시 덮어쓰기가 제한되므로 `gcloud storage buckets update --clear-retention-period gs://${BUCKET}`로 해제하거나, `GCS_PREFIX`를 새 폴더명으로 바꿔 버전별로 저장하세요.
+
+2. **Cloud Build/Run 서비스 계정에 GCS 권한 부여**
+   ```bash
+   PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format='value(projectNumber)')
+   BUILD_SA=${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com
+   RUN_SA=${PROJECT_NUMBER}-compute@developer.gserviceaccount.com
+
+   # 업로드/다운로드 모두 수행할 수 있도록 Object Admin 권한 부여
+   for SA in ${BUILD_SA} ${RUN_SA}; do
+     gcloud storage buckets add-iam-policy-binding gs://${BUCKET} \
+       --member="serviceAccount:${SA}" \
+       --role="roles/storage.objectAdmin"
+   done
+   ```
+   Cloud Build가 Artifact Registry에 이미지를 푸시할 때도 동일 서비스 계정을 사용하므로, 앞서 기술한 `roles/artifactregistry.writer`와 함께 bucket 권한을 부여하면 배포 스크립트가 자동으로 runtime 백업을 수행할 수 있습니다.
+
+3. **배포 스크립트 연동**
+   - `.env`에 `SYNC_RUNTIME=true`, `GCS_BUCKET=${BUCKET}`, `GCS_PREFIX=runtime/` 등을 지정하면 `scripts/cloud_run_deploy.sh`가 배포 전후에 `gcs_sync.py`를 호출합니다.
+   - 만약 Retention 정책을 유지하면서 덮어쓰기를 피하고 싶다면 `GCS_PREFIX=runtime-$(date +%Y%m%d%H%M%S)/`처럼 버전별 경로를 사용해 주세요.
+
+4. **정책 모니터링 팁**
+   - 버킷 Retention 상태 확인: `gcloud storage buckets describe gs://${BUCKET} --format='value(retentionPolicy)'`
+   - 객체 잠금으로 인해 403이 발생하면 `gcloud storage objects describe gs://${BUCKET}/runtime/ai_history.jsonl --format='value(eventBasedHold,temporaryHold,retentionExpirationTime)'`로 원인을 확인한 뒤 정책을 조정하거나 새 prefix로 업로드하면 됩니다.
