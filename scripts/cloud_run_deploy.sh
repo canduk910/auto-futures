@@ -150,7 +150,7 @@ main() {
     --cpu "$CPU"
     --max-instances "$MAX_INSTANCES"
     --set-env-vars "$(IFS=,; echo "${env_vars[*]}")"
-    --set-secrets BINANCE_TESTNET_API_KEY=binance-testnet-api-key:latest,BINANCE_TESTNET_SECRET_KEY=binance-testnet-secret-key:latest,OPENAI_API_KEY=openai-key:latest
+    --set-secrets BINANCE_TESTNET_API_KEY=binance-testnet-api-key:latest,BINANCE_TESTNET_SECRET_KEY=binance-testnet-secret-key:latest,OPENAI_API_KEY=openai-api-key:latest
   )
   if [[ "${ALLOW_UNAUTH}" == "true" ]]; then
     deploy_args+=(--allow-unauthenticated)
