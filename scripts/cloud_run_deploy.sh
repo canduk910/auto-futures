@@ -113,6 +113,35 @@ main() {
   ensure_secret openai-api-key
 
   echo "[STEP] Deploying ${SERVICE} to Cloud Run"
+  env_vars=(
+    "ENV=paper"
+    "DRY_RUN=false"
+    "SYMBOL=ETHUSDT"
+    "LOG_LEVEL=INFO"
+    "WS_ENABLE=true"
+    "WS_USER_ENABLE=true"
+    "WS_PRICE_ENABLE=true"
+    "WS_TRACE=false"
+    "LOOP_ENABLE=true"
+    "LOOP_TRIGGER=event"
+    "LOOP_INTERVAL_SEC=60"
+    "LOOP_COOLDOWN_SEC=8"
+    "LOOP_BACKOFF_MAX_SEC=30"
+    "MP_WINDOW_SEC=10"
+    "MP_DELTA_PCT=0.2"
+    "KLINE_RANGE_PCT=0.5"
+    "VOL_LOOKBACK=20"
+    "VOL_MULT=3.0"
+    "USE_QUOTE_VOLUME=true"
+    "LEVERAGE=5"
+    "TZ=Asia/Seoul"
+    "PROJECT_ID=${PROJECT_ID}"
+    "GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
+  )
+  [[ -n "$GCS_BUCKET" ]] && env_vars+=("GCS_BUCKET=${GCS_BUCKET}")
+  [[ -n "$GCS_PREFIX" ]] && env_vars+=("GCS_PREFIX=${GCS_PREFIX}")
+  [[ -n "${RESTORE_RUNTIME:-}" ]] && env_vars+=("RESTORE_RUNTIME=${RESTORE_RUNTIME}")
+
   deploy_args=(
     --image "$IMAGE"
     --region "$REGION"
@@ -120,8 +149,8 @@ main() {
     --memory "$MEMORY"
     --cpu "$CPU"
     --max-instances "$MAX_INSTANCES"
-    --set-env-vars "ENV=paper,DRY_RUN=false,SYMBOL=ETHUSDT,LOG_LEVEL=INFO,WS_ENABLE=true,WS_USER_ENABLE=true,WS_PRICE_ENABLE=true,WS_TRACE=false,LOOP_ENABLE=true,LOOP_TRIGGER=event,LOOP_INTERVAL_SEC=60,LOOP_COOLDOWN_SEC=8,LOOP_BACKOFF_MAX_SEC=30,MP_WINDOW_SEC=10,MP_DELTA_PCT=0.2,KLINE_RANGE_PCT=0.5,VOL_LOOKBACK=20,VOL_MULT=3.0,USE_QUOTE_VOLUME=true,LEVERAGE=5,TZ=Asia/Seoul,PROJECT_ID=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
-    --set-secrets BINANCE_TESTNET_API_KEY=binance-testnet-api-key:latest,BINANCE_TESTNET_SECRET_KEY=binance-testnet-secret-key:latest,OPENAI_API_KEY=openai-api-key:latest
+    --set-env-vars "$(IFS=,; echo "${env_vars[*]}")"
+    --set-secrets BINANCE_TESTNET_API_KEY=binance-testnet-api-key:latest,BINANCE_TESTNET_SECRET_KEY=binance-testnet-secret-key:latest,OPENAI_API_KEY=openai-key:latest
   )
   if [[ "${ALLOW_UNAUTH}" == "true" ]]; then
     deploy_args+=(--allow-unauthenticated)

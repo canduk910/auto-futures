@@ -20,6 +20,20 @@ restore_runtime() {
   fi
 }
 
+upload_runtime() {
+  if [ "${UPLOAD_ON_EXIT:-true}" != "true" ]; then
+    return 0
+  fi
+  if [ -z "${GCS_BUCKET:-}" ]; then
+    return 0
+  fi
+  PREFIX="${GCS_PREFIX:-runtime/}"
+  echo "[ENTRYPOINT] Uploading runtime files to gs://${GCS_BUCKET}/${PREFIX}"
+  if ! python scripts/gcs_sync.py --bucket "${GCS_BUCKET}" upload --dest-prefix "${PREFIX}"; then
+    echo "[ENTRYPOINT] runtime 업로드 실패 (무시하고 종료)" >&2
+  fi
+}
+
 restore_runtime
 
 PORT=${PORT:-8080}
@@ -32,7 +46,15 @@ STREAMLIT_CMD=(
 
 python auto_future_trader.py &
 TRADER_PID=$!
-trap "echo '[ENTRYPOINT] Caught signal, stopping processes'; kill ${TRADER_PID}; wait ${TRADER_PID} 2>/dev/null" TERM INT
+
+cleanup() {
+  echo "[ENTRYPOINT] Caught signal, performing cleanup"
+  upload_runtime || true
+  kill ${TRADER_PID} 2>/dev/null || true
+  wait ${TRADER_PID} 2>/dev/null || true
+}
+
+trap cleanup TERM INT
 
 echo "[ENTRYPOINT] Launched auto_future_trader.py (pid=${TRADER_PID})"
 echo "[ENTRYPOINT] Starting Streamlit dashboard on port ${PORT}"
