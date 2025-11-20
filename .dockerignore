@@ -18,6 +18,9 @@ venv/
 runtime/
 logs/
 
+# 허용해야 하는 스크립트 (gcs_sync.py) 제외
+!/scripts/gcs_sync.py
+
 # IDE / editor
 .idea/
 .vscode/
@@ -94,6 +97,9 @@ dev.env
 .env*
 !.env.example
 *.env.local
+
+# Cloud deploy helper scripts 제외 (이미 허용됨)
+!/scripts/gcs_sync.py
 
 **/.DS_Store
 **/.vscode

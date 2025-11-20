@@ -14,4 +14,6 @@ venv/
 .DS_Store
 runtime/*.jsonl
 runtime/*.json
-/scripts/
+#! Allow shipping helper scripts while keeping local-only files ignored
+scripts/*.log
+scripts/*.tmp
