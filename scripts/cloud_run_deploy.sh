@@ -34,6 +34,18 @@ SYNC_MODE=${SYNC_MODE:-upload}
 GCS_BUCKET=${GCS_BUCKET:-}
 GCS_PREFIX=${GCS_PREFIX:-runtime/}
 
+add_env_var() {
+  local key="$1"
+  local value="$2"
+  for i in "${!env_vars[@]}"; do
+    if [[ "${env_vars[$i]%%=*}" == "$key" ]]; then
+      env_vars[$i]="$key=$value"
+      return
+    fi
+  done
+  env_vars+=("$key=$value")
+}
+
 ensure_secret() {
   local secret="$1"
   if ! gcloud secrets describe "$secret" >/dev/null 2>&1; then
@@ -113,34 +125,60 @@ main() {
   ensure_secret openai-api-key
 
   echo "[STEP] Deploying ${SERVICE} to Cloud Run"
-  env_vars=(
-    "ENV=paper"
-    "DRY_RUN=false"
-    "SYMBOL=ETHUSDT"
-    "LOG_LEVEL=INFO"
-    "WS_ENABLE=true"
-    "WS_USER_ENABLE=true"
-    "WS_PRICE_ENABLE=true"
-    "WS_TRACE=false"
-    "LOOP_ENABLE=true"
-    "LOOP_TRIGGER=event"
-    "LOOP_INTERVAL_SEC=60"
-    "LOOP_COOLDOWN_SEC=8"
-    "LOOP_BACKOFF_MAX_SEC=30"
-    "MP_WINDOW_SEC=10"
-    "MP_DELTA_PCT=0.35"
-    "KLINE_RANGE_PCT=0.6"
-    "VOL_LOOKBACK=20"
-    "VOL_MULT=3.0"
-    "USE_QUOTE_VOLUME=true"
-    "LEVERAGE=5"
-    "TZ=Asia/Seoul"
-    "PROJECT_ID=${PROJECT_ID}"
-    "GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
-  )
-  [[ -n "$GCS_BUCKET" ]] && env_vars+=("GCS_BUCKET=${GCS_BUCKET}")
-  [[ -n "$GCS_PREFIX" ]] && env_vars+=("GCS_PREFIX=${GCS_PREFIX}")
-  [[ -n "${RESTORE_RUNTIME:-}" ]] && env_vars+=("RESTORE_RUNTIME=${RESTORE_RUNTIME}")
+  env_vars=()
+
+  add_env_var "ENV" "${ENV:-paper}"
+  add_env_var "DRY_RUN" "${DRY_RUN:-false}"
+  add_env_var "SYMBOL" "${SYMBOL:-ETHUSDT}"
+  add_env_var "LOG_LEVEL" "${LOG_LEVEL:-INFO}"
+  add_env_var "WS_ENABLE" "${WS_ENABLE:-true}"
+  add_env_var "WS_USER_ENABLE" "${WS_USER_ENABLE:-true}"
+  add_env_var "WS_PRICE_ENABLE" "${WS_PRICE_ENABLE:-true}"
+  add_env_var "WS_TRACE" "${WS_TRACE:-false}"
+  add_env_var "LOOP_ENABLE" "${LOOP_ENABLE:-true}"
+  add_env_var "LOOP_TRIGGER" "${LOOP_TRIGGER:-event}"
+  add_env_var "LOOP_INTERVAL_SEC" "${LOOP_INTERVAL_SEC:-60}"
+  add_env_var "LOOP_COOLDOWN_SEC" "${LOOP_COOLDOWN_SEC:-8}"
+  add_env_var "LOOP_BACKOFF_MAX_SEC" "${LOOP_BACKOFF_MAX_SEC:-30}"
+  add_env_var "MP_WINDOW_SEC" "${MP_WINDOW_SEC:-10}"
+  add_env_var "MP_DELTA_PCT" "${MP_DELTA_PCT:-0.35}"
+  add_env_var "KLINE_RANGE_PCT" "${KLINE_RANGE_PCT:-0.6}"
+  add_env_var "VOL_LOOKBACK" "${VOL_LOOKBACK:-20}"
+  add_env_var "VOL_MULT" "${VOL_MULT:-3.0}"
+  add_env_var "USE_QUOTE_VOLUME" "${USE_QUOTE_VOLUME:-true}"
+  add_env_var "LEVERAGE" "${LEVERAGE:-5}"
+  add_env_var "TZ" "${TZ:-Asia/Seoul}"
+  add_env_var "PROJECT_ID" "${PROJECT_ID}"
+  add_env_var "GOOGLE_CLOUD_PROJECT" "${PROJECT_ID}"
+
+  secret_keys_regex='^(BINANCE_TESTNET_API_KEY|BINANCE_TESTNET_SECRET_KEY|OPENAI_API_KEY)$'
+  if [[ "$LOAD_ENV_FILE" == "true" && -f "$ENV_FILE" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line#${line%%[![:space:]]*}}"
+      line="${line%${line##*[![:space:]]}}"
+      if [[ "$line" =~ ^([^#]*[^[:space:]])[[:space:]]+#.*$ ]]; then
+        line="${BASH_REMATCH[1]}"
+      fi
+      [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
+      [[ "$line" == export* ]] && line="${line#export }"
+      key="${line%%=*}"
+      value="${line#*=}"
+      key="${key#${key%%[![:space:]]*}}"
+      key="${key%${key##*[![:space:]]}}"
+      [[ -z "$key" || "$key" =~ $secret_keys_regex ]] && continue
+      add_env_var "$key" "$value"
+    done < "$ENV_FILE"
+  fi
+
+  [[ -n "$GCS_BUCKET" ]] && add_env_var "GCS_BUCKET" "$GCS_BUCKET"
+  [[ -n "$GCS_PREFIX" ]] && add_env_var "GCS_PREFIX" "$GCS_PREFIX"
+  [[ -n "${RESTORE_RUNTIME:-}" ]] && add_env_var "RESTORE_RUNTIME" "$RESTORE_RUNTIME"
+
+  env_vars_payload=""
+  for kv in "${env_vars[@]}"; do
+    env_vars_payload+="${kv}|"
+  done
+  env_vars_payload="${env_vars_payload%|}"
 
   deploy_args=(
     --image "$IMAGE"
@@ -149,7 +187,7 @@ main() {
     --memory "$MEMORY"
     --cpu "$CPU"
     --max-instances "$MAX_INSTANCES"
-    --set-env-vars "$(IFS=,; echo "${env_vars[*]}")"
+    --set-env-vars "^|^${env_vars_payload}"
     --set-secrets BINANCE_TESTNET_API_KEY=binance-testnet-api-key:latest,BINANCE_TESTNET_SECRET_KEY=binance-testnet-secret-key:latest,OPENAI_API_KEY=openai-api-key:latest
   )
   if [[ "${ALLOW_UNAUTH}" == "true" ]]; then

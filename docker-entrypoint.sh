@@ -46,20 +46,24 @@ STREAMLIT_CMD=(
 
 python auto_future_trader.py &
 TRADER_PID=$!
+CLEANED_UP=false
 
 cleanup() {
+  if [ "$CLEANED_UP" = "true" ]; then
+    return
+  fi
+  CLEANED_UP=true
   echo "[ENTRYPOINT] Caught signal, performing cleanup"
   upload_runtime || true
   kill ${TRADER_PID} 2>/dev/null || true
   wait ${TRADER_PID} 2>/dev/null || true
 }
 
-trap cleanup TERM INT
+trap cleanup TERM INT EXIT
 
 echo "[ENTRYPOINT] Launched auto_future_trader.py (pid=${TRADER_PID})"
 echo "[ENTRYPOINT] Starting Streamlit dashboard on port ${PORT}"
 "${STREAMLIT_CMD[@]}"
 
 wait ${TRADER_PID}
-
-#exec "$@"
+cleanup
