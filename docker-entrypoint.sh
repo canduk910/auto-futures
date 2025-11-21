@@ -46,6 +46,7 @@ STREAMLIT_CMD=(
 
 python auto_future_trader.py &
 TRADER_PID=$!
+STREAMLIT_PID=""
 CLEANED_UP=false
 
 cleanup() {
@@ -55,15 +56,23 @@ cleanup() {
   CLEANED_UP=true
   echo "[ENTRYPOINT] Caught signal, performing cleanup"
   upload_runtime || true
-  kill ${TRADER_PID} 2>/dev/null || true
-  wait ${TRADER_PID} 2>/dev/null || true
+  if [ -n "$STREAMLIT_PID" ]; then
+    kill "$STREAMLIT_PID" 2>/dev/null || true
+    wait "$STREAMLIT_PID" 2>/dev/null || true
+  fi
+  kill "$TRADER_PID" 2>/dev/null || true
+  wait "$TRADER_PID" 2>/dev/null || true
 }
 
 trap cleanup TERM INT EXIT
 
-echo "[ENTRYPOINT] Launched auto_future_trader.py (pid=${TRADER_PID})"
-echo "[ENTRYPOINT] Starting Streamlit dashboard on port ${PORT}"
-"${STREAMLIT_CMD[@]}"
+"${STREAMLIT_CMD[@]}" &
+STREAMLIT_PID=$!
 
-wait ${TRADER_PID}
+echo "[ENTRYPOINT] Launched auto_future_trader.py (pid=${TRADER_PID})"
+echo "[ENTRYPOINT] Starting Streamlit dashboard on port ${PORT} (pid=${STREAMLIT_PID})"
+
+wait -n "$TRADER_PID" "$STREAMLIT_PID"
+EXIT_CODE=$?
 cleanup
+exit $EXIT_CODE
