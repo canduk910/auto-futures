@@ -30,8 +30,12 @@ from common_utils import safe_float
 from dotenv import load_dotenv
 load_dotenv()
 
+from runtime_sync import safe_upload
+
 log = logging.getLogger("SERVICE")
 _STOP = threading.Event()
+_SYNC_INTERVAL = int(os.getenv("RUNTIME_SYNC_INTERVAL_SEC", "300"))
+_PENDING_FLUSH = threading.Event()
 
 # Provide a certifi-driven SSL context for ThreadedWebsocketManager to avoid certificate errors.
 ssl_context = ssl.create_default_context(cafile=certifi.where())
@@ -278,6 +282,18 @@ class VolatilityDetector:
 #      - kline : 1분봉 종가마다 실행
 #      - event : 급변 이벤트(마크프라이스/1분봉) 발생 시 실행
 
+def _sync_worker():
+    while not _STOP.is_set():
+        triggered = _PENDING_FLUSH.wait(timeout=_SYNC_INTERVAL)
+        _PENDING_FLUSH.clear()
+        if _STOP.is_set():
+            break
+        try:
+            safe_upload()
+            log.info("runtime sync 완료 (triggered=%s)", triggered)
+        except Exception:
+            log.exception("runtime sync 실패")
+
 def run_service(symbol: str, run_once_cb: Callable[[str], None]):
     trigger   = os.getenv("LOOP_TRIGGER", "kline").lower()   # kline | timer
     interval  = int(os.getenv("LOOP_INTERVAL_SEC", "60"))
@@ -339,6 +355,8 @@ def run_service(symbol: str, run_once_cb: Callable[[str], None]):
 
     last_run = 0.0
     backoff  = 1.0
+    sync_thread = threading.Thread(target=_sync_worker, name="runtime-sync", daemon=True)
+    sync_thread.start()
     try:
         mark_cnt = 0; kline_cnt = 0; last_stat = time.time()
         while not _STOP.is_set():
@@ -366,6 +384,7 @@ def run_service(symbol: str, run_once_cb: Callable[[str], None]):
                             "result": "executed",
                             "ts": finished,
                         })
+                        _PENDING_FLUSH.set()
                         backoff = 1.0
                     _STOP.wait(0.5)
                     continue
@@ -419,6 +438,7 @@ def run_service(symbol: str, run_once_cb: Callable[[str], None]):
                         "interval": k.get("i"),
                         "ts": finished,
                     })
+                    _PENDING_FLUSH.set()
                     backoff = 1.0
                     continue
 
@@ -466,6 +486,7 @@ def run_service(symbol: str, run_once_cb: Callable[[str], None]):
                     #_invoke_without_ws(run_once_cb, symbol)
                     run_once_cb(symbol)
                     last_run = time.time()
+                    _PENDING_FLUSH.set()
                     backoff = 1.0
                     continue
 
@@ -476,6 +497,10 @@ def run_service(symbol: str, run_once_cb: Callable[[str], None]):
         log.info("stop signal, cleaning up...")
         update_status("service", {"state": "stopping", "symbol": symbol})
     finally:
+        _STOP.set()
+        _PENDING_FLUSH.set()
+        if sync_thread.is_alive():
+            sync_thread.join(timeout=5)
         try:
             if ws_instance:
                 ws_instance.stop()

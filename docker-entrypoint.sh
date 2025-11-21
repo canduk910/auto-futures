@@ -13,11 +13,13 @@ restore_runtime() {
     echo "[ENTRYPOINT] RESTORE_RUNTIME=true지만 GCS_BUCKET이 비어 있습니다. 복원을 건너뜁니다." >&2
     return 0
   fi
-  PREFIX="${GCS_PREFIX:-runtime/}"
-  echo "[ENTRYPOINT] Restoring runtime files from gs://${GCS_BUCKET}/${PREFIX}"
-  if ! python scripts/gcs_sync.py --bucket "${GCS_BUCKET}" download --prefix "${PREFIX}"; then
-    echo "[ENTRYPOINT] runtime 복원 실패 (무시하고 계속 진행)" >&2
-  fi
+  echo "[ENTRYPOINT] Restoring runtime files from gs://${GCS_BUCKET}/${GCS_PREFIX:-runtime/}"
+  python - <<'PY'
+import logging
+from runtime_sync import safe_download
+logging.basicConfig(level=logging.INFO)
+safe_download()
+PY
 }
 
 upload_runtime() {
@@ -27,14 +29,25 @@ upload_runtime() {
   if [ -z "${GCS_BUCKET:-}" ]; then
     return 0
   fi
-  PREFIX="${GCS_PREFIX:-runtime/}"
-  echo "[ENTRYPOINT] Uploading runtime files to gs://${GCS_BUCKET}/${PREFIX}"
-  if ! python scripts/gcs_sync.py --bucket "${GCS_BUCKET}" upload --dest-prefix "${PREFIX}"; then
-    echo "[ENTRYPOINT] runtime 업로드 실패 (무시하고 종료)" >&2
-  fi
+  echo "[ENTRYPOINT] Uploading runtime files to gs://${GCS_BUCKET}/${GCS_PREFIX:-runtime/}"
+  python - <<'PY'
+import logging
+from runtime_sync import safe_upload
+logging.basicConfig(level=logging.INFO)
+safe_upload()
+PY
 }
 
 restore_runtime
+if [ "${UPLOAD_ON_START:-false}" = "true" ]; then
+  echo "[ENTRYPOINT] UPLOAD_ON_START=true → runtime 즉시 업로드"
+  python - <<'PY'
+import logging
+from runtime_sync import safe_upload
+logging.basicConfig(level=logging.INFO)
+safe_upload()
+PY
+fi
 
 PORT=${PORT:-8080}
 STREAMLIT_CMD=(
