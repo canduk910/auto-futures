@@ -16,6 +16,37 @@ try:
 except ImportError:  # pragma: no cover
     _autorefresh_component = None
 
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+PROJECT_ROOT = CURRENT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from config_store import load_config, save_config, MANAGED_RUNTIME_KEYS  # noqa: E402
+
+_DEF_FALLBACK = {
+    key: meta.get("default") for key, meta in MANAGED_RUNTIME_KEYS.items()
+}
+
+def _resolve_setting(key: str, config_values: Dict[str, Any]) -> Any:
+    value = config_values.get(key)
+    if value is None:
+        return _DEF_FALLBACK.get(key)
+    return value
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
 def _safe_dataframe(df, **kwargs):
     try:
         return st.dataframe(df, width="stretch", **kwargs)
@@ -55,15 +86,7 @@ def _render_autorefresh(interval_seconds: int, label: str) -> None:
         return
     autorefresh_fn(interval=interval_seconds * 1000, limit=None, key="auto_refresh_tick")
 
-CURRENT_DIR = Path(__file__).resolve().parent
-if str(CURRENT_DIR) not in sys.path:
-    sys.path.insert(0, str(CURRENT_DIR))
-PROJECT_ROOT = CURRENT_DIR.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 from status_store import read_status, read_ai_history, read_close_history  # noqa: E402
-from config_store import load_config, save_config  # noqa: E402
 
 st.set_page_config(page_title="자동 암호화폐 트레이딩", layout="wide")
 
@@ -115,7 +138,7 @@ ENV_FIELD_INFO: Dict[str, Dict[str, str]] = {
     },
     "LOOP_TRIGGER": {
         "label": "루프 트리거",
-        "description": "주기 실행 조건 (event, schedule 등)",
+        "description": "주기 실행 조건(event/kline/timer)",
     },
     "LOOP_INTERVAL_SEC": {
         "label": "루프 실행 간격(초)",
@@ -124,6 +147,10 @@ ENV_FIELD_INFO: Dict[str, Dict[str, str]] = {
     "LOOP_COOLDOWN_SEC": {
         "label": "루프 쿨다운(초)",
         "description": "루프 종료 후 대기할 시간",
+    },
+    "LOOP_BACKOFF_MAX_SEC": {
+        "label": "오류 백오프 최대(초)",
+        "description": "오류 발생 시 재시도까지 기다릴 최대 시간",
     },
     "MP_WINDOW_SEC": {
         "label": "가격 평균 창(초)",
@@ -157,6 +184,7 @@ REFRESH_OPTIONS = {
     "1분": 60,
     "5분": 300,
 }
+TRIGGER_OPTIONS = ["event", "kline", "timer"]
 AUTO_REFRESH_STATE_KEY = "_auto_refresh_state"
 
 def _rerun_app() -> None:
@@ -667,219 +695,65 @@ elif selected_tab == "청산 분석":
             if sort_key:
                 close_df = close_df.sort_values(by=sort_key, ascending=True, na_position="last")
 
-            pnl_total = float(close_df["realized_pnl_usdt"].sum(skipna=True))
-            trade_count = int(close_df["realized_pnl_usdt"].notna().sum())
-            win_rate = (
-                close_df["realized_pnl_usdt"].gt(0).mean() * 100.0
-                if trade_count > 0
-                else 0.0
-            )
-            avg_return_pct = (
-                float(close_df["return_pct"].mean(skipna=True))
-                if close_df["return_pct"].notna().any()
-                else 0.0
-            )
-
-            close_df["pnl_color"] = close_df["realized_pnl_usdt"].apply(
-                lambda x: "positive" if x > 0 else ("negative" if x < 0 else "neutral")
-            )
-
-            metrics_col, chart_col = st.columns([1, 2], gap="large")
-            with metrics_col:
-                st.metric("총 손익 (USDT)", f"{pnl_total:,.2f}")
-                st.metric("거래 건수", trade_count)
-                st.metric("승률", f"{win_rate:,.1f}%")
-                st.metric("평균 수익률", f"{avg_return_pct:,.2f}%")
-
-            def _ensure_datetime(series: pd.Series) -> pd.Series:
-                try:
-                    return pd.to_datetime(series, unit="s", errors="coerce")
-                except Exception:
-                    return pd.to_datetime(series, errors="coerce")
-
-            time_col = sort_key or "ts"
-            if time_col in close_df.columns:
-                close_df["closed_ts_dt"] = _ensure_datetime(close_df[time_col])
+            pnl_total = float(close_df["realized_pnl_usdt"].sum() or 0)
+            qty_total = float(close_df["qty"].sum() or 0)
+            if qty_total != 0:
+                close_df["진입가"] = close_df["entry_price"]
+                close_df["청산가"] = close_df["exit_price"]
+                close_df["손익"] = close_df["realized_pnl_usdt"]
+                close_df["수익률"] = close_df["return_pct"]
+                display_df = close_df.rename(columns={
+                    "symbol": "심볼",
+                    "side": "방향",
+                    "진입가": "진입가",
+                    "청산가": "청산가",
+                    "손익": "손익",
+                    "수익률": "수익률",
+                })
+                cols_to_show = [c for c in [
+                    "심볼",
+                    "방향",
+                    "진입가",
+                    "청산가",
+                    "손익",
+                    "수익률",
+                ] if c in display_df.columns]
+                _safe_dataframe(display_df[cols_to_show], hide_index=True)
             else:
-                close_df["closed_ts_dt"] = pd.NaT
-
-            close_df["cumulative_pnl"] = close_df["realized_pnl_usdt"].fillna(0).cumsum()
-
-            def plot_close_history(df: pd.DataFrame) -> None:
-                valid_rows = df.dropna(subset=["closed_ts_dt"])
-                if valid_rows.empty:
-                    st.info("차트에 사용할 청산 시각 정보가 없습니다.")
-                    return
-                pnl_chart = alt.Chart(valid_rows).mark_bar().encode(
-                    x=alt.X("closed_ts_dt:T", title="청산 시각"),
-                    y=alt.Y("realized_pnl_usdt:Q", title="실현 손익 (USDT)"),
-                    color=alt.Color(
-                        "pnl_color:N",
-                        title="손익",
-                        scale=alt.Scale(
-                            domain=["positive", "negative", "neutral"],
-                            range=["#22c55e", "#ef4444", "#9ca3af"],
-                        ),
-                    ),
-                    tooltip=[
-                        alt.Tooltip("closed_ts_dt:T", title="청산 시각"),
-                        alt.Tooltip("symbol:N", title="심볼"),
-                        alt.Tooltip("realized_pnl_usdt:Q", title="실현 손익 (USDT)", format=".2f"),
-                        alt.Tooltip("return_pct:Q", title="수익률 (%)", format=".2f"),
-                        alt.Tooltip("qty:Q", title="수량"),
-                    ],
-                ).properties(height=260, title="포지션별 실현 손익")
-
-                cum_chart = alt.Chart(valid_rows).mark_line(point=True).encode(
-                    x=alt.X("closed_ts_dt:T", title="청산 시각"),
-                    y=alt.Y("cumulative_pnl:Q", title="누적 손익 (USDT)"),
-                    tooltip=[
-                        alt.Tooltip("closed_ts_dt:T", title="청산 시각"),
-                        alt.Tooltip("cumulative_pnl:Q", title="누적 손익", format=".2f"),
-                    ],
-                ).properties(height=200, title="누적 손익 추이")
-
-                _safe_altair_chart((pnl_chart & cum_chart))
-
-            plot_close_history(close_df)
-
-            if {"entry_price", "exit_price"}.issubset(close_df.columns):
-                price_rows = close_df.dropna(subset=["entry_price", "exit_price", "closed_ts_dt"])
-                if not price_rows.empty:
-                    melted = price_rows.melt(
-                        id_vars=["closed_ts_dt", "symbol"],
-                        value_vars=["entry_price", "exit_price"],
-                        var_name="price_type",
-                        value_name="price",
-                    )
-                    price_chart = alt.Chart(melted).mark_line(point=True).encode(
-                        x=alt.X("closed_ts_dt:T", title="청산 시각"),
-                        y=alt.Y("price:Q", title="가격"),
-                        color=alt.Color(
-                            "price_type:N",
-                            title="가격 유형",
-                            scale=alt.Scale(domain=["entry_price", "exit_price"], range=["#6366f1", "#ec4899"]),
-                        ),
-                        tooltip=[
-                            alt.Tooltip("closed_ts_dt:T", title="청산 시각"),
-                            alt.Tooltip("symbol:N", title="심볼"),
-                            alt.Tooltip("price_type:N", title="유형"),
-                            alt.Tooltip("price:Q", title="가격", format=".2f"),
-                        ],
-                    ).properties(height=240, title="진입/청산가 추이")
-                    _safe_altair_chart(price_chart)
-
-            with st.expander("상세 청산 내역", expanded=False):
-                display_cols = [
-                    "closed_ts_dt",
-                    "symbol",
-                    "side",
-                    "qty",
-                    "entry_price",
-                    "exit_price",
-                    "realized_pnl_usdt",
-                    "return_pct",
-                    "decision",
-                    "confidence",
-                    "status",
-                ]
-                extra_cols = [col for col in close_df.columns if col not in display_cols and col != "pnl_color"]
-                final_cols = [col for col in display_cols if col in close_df.columns]
-                final_cols.extend(extra_cols)
-                _safe_dataframe(close_df[final_cols], hide_index=True)
+                st.info("청산 내역이 비어 있습니다.")
     else:
-        st.info("청산 분석을 위한 데이터가 없습니다.")
+        st.info("청산 분석 데이터를 불러올 수 없습니다.")
 
-elif selected_tab == "설정":
+else:  # 설정 탭
     st.subheader("환경 설정")
-
-    def _fetch_config_values() -> Dict[str, str]:
-        try:
-            data = load_config()
-            return {k: v for k, v in data.values.items() if k in EDITABLE_KEYS}
-        except Exception as exc:
-            st.error(f"환경 설정을 불러오지 못했습니다: {exc}")
-            return {}
-
-    def _persist_config_updates(updates: Dict[str, Any]) -> None:
-        str_values = {k: str(v) for k, v in updates.items()}
-        try:
-            save_config(str_values)
-            st.success("환경 설정이 업데이트되었습니다.")
+    config = load_config()
+    settings = {k: config.values.get(k) for k in EDITABLE_KEYS if k in config.values}
+    for key in EDITABLE_KEYS:
+        meta = ENV_FIELD_INFO.get(key, {"label": key, "description": key})
+        st.caption(meta["description"])
+        if key == "LOOP_TRIGGER":
+            default_index = TRIGGER_OPTIONS.index(settings.get(key, TRIGGER_OPTIONS[0])) if settings.get(key) in TRIGGER_OPTIONS else 0
+            new_val = st.selectbox(meta["label"], TRIGGER_OPTIONS, index=default_index)
+        elif key in BOOL_KEYS:
+            new_val = st.checkbox(meta["label"], value=str(settings.get(key, "false")).lower() in ("1", "true", "yes"))
+        elif key in FLOAT_KEYS:
+            new_val = st.number_input(meta["label"], value=float(settings.get(key, 0)))
+        elif key in INT_KEYS:
+            new_val = st.number_input(meta["label"], value=int(settings.get(key, 0)), format="%d")
+        else:
+            new_val = st.text_input(meta["label"], value=settings.get(key, ""))
+        if st.button(f"{meta['label']} 저장", key=f"save_{key}"):
+            save_config({key: str(new_val)})
+            st.success("저장되었습니다.")
             _rerun_app()
-        except Exception as exc:
-            st.error(f"환경 설정 저장 실패: {exc}")
 
-    editable_data = _fetch_config_values()
-    ordered_keys = [k for k in EDITABLE_KEYS if k in editable_data]
-
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("### 현재 설정 값")
-        if not ordered_keys:
-            st.info("표시할 설정 값이 없습니다.")
-        for key in ordered_keys:
-            value = editable_data[key]
-            normalized_value = str(value).lower()
-            input_key = f"config_{key}"
-            meta = ENV_FIELD_INFO.get(key, {"label": key, "description": key})
-            label = f"{meta['label']} ({key})"
-            if key in BOOL_KEYS:
-                current = normalized_value in ("true", "1", "yes")
-                new_val = st.checkbox(label, value=current, key=input_key)
-                if new_val != current:
-                    _persist_config_updates({key: new_val})
-            elif key in FLOAT_KEYS:
-                new_val = st.number_input(label, value=float(value), format="%.8f", key=input_key)
-                if new_val != float(value):
-                    _persist_config_updates({key: new_val})
-            elif key in INT_KEYS:
-                new_val = st.number_input(label, value=int(value), format="%d", key=input_key)
-                if new_val != int(value):
-                    _persist_config_updates({key: new_val})
-            else:
-                new_val = st.text_input(label, value=str(value), key=input_key)
-                if new_val != str(value):
-                    _persist_config_updates({key: new_val})
-
-    with col2:
-        st.write("### .env 파일 관리")
-        if RUNNING_ON_CLOUD:
-            st.caption("Cloud Run에서는 Secret Manager를 통해 설정이 관리됩니다.")
-
-        def _download_env_file() -> str:
-            if ENV_PATH.exists():
-                return ENV_PATH.read_text(encoding="utf-8")
-            st.warning(".env 파일을 찾을 수 없습니다.")
-            return ""
-
-        def _upload_env_file(uploaded_file: Any) -> None:
-            if uploaded_file is None:
-                st.warning("업로드할 .env 파일을 선택하세요.")
-                return
-            content = uploaded_file.read().decode("utf-8")
-            updates: Dict[str, str] = {}
-            for line in content.splitlines():
-                if not line or line.strip().startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k = k.strip()
-                if k in EDITABLE_KEYS:
-                    updates[k] = v.strip()
-            if not updates:
-                st.warning("적용할 항목이 없습니다.")
-                return
-            try:
-                save_config(updates)
-                st.success(".env 파일이 반영되었습니다.")
-                _rerun_app()
-            except Exception as exc:
-                st.error(f"설정 업로드 실패: {exc}")
-
-        if st.button(".env 내용 보기"):
-            text = _download_env_file()
-            if text:
-                st.code(text, language="bash")
-        uploaded_file = st.file_uploader(".env 업로드", type="env")
-        if st.button("업로드 적용"):
-            _upload_env_file(uploaded_file)
+st.sidebar.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] {
+        animation: none;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)

@@ -82,6 +82,9 @@ from ui.status_store import (
     append_close_history,
 )
 
+from config_store import apply_runtime_settings_to_env
+apply_runtime_settings_to_env()
+
 # .env 파일에서 환경변수 로드
 from dotenv import load_dotenv
 load_dotenv()

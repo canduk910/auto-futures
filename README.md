@@ -357,3 +357,14 @@ GCS_BUCKET=my-bucket python3 scripts/gcs_sync.py download
 4. **정책 모니터링 팁**
    - 버킷 Retention 상태 확인: `gcloud storage buckets describe gs://${BUCKET} --format='value(retentionPolicy)'`
    - 객체 잠금으로 인해 403이 발생하면 `gcloud storage objects describe gs://${BUCKET}/runtime/ai_history.jsonl --format='value(eventBasedHold,temporaryHold,retentionExpirationTime)'`로 원인을 확인한 뒤 정책을 조정하거나 새 prefix로 업로드하면 됩니다.
+
+## Runtime 설정 저장소
+- `runtime/settings.json` 에는 Streamlit 설정 화면에서 수정한 트레이딩/루프 파라미터가 JSON 형태로 저장됩니다.
+- `config_store.apply_runtime_settings_to_env()` 가 이 파일을 읽어 `os.environ` 에 주입하므로, 프로세스 기동 시 `.env` 대신 최신 값을 사용합니다.
+- Cloud Run 배포 시 `docker-entrypoint.sh` 가 가장 먼저 이 함수를 호출하고, 이후 `runtime_sync` 가 GCS 버킷과 동기화를 수행합니다.
+- `.env` 에는 API 키/프로젝트 설정 등 민감값만 남기고 운영 파라미터는 UI에서 관리하세요.
+
+## Streamlit 설정 화면
+- "환경 설정" 탭은 `runtime/settings.json` 과 동기화되며, 체크박스/숫자 입력을 갱신하면 즉시 JSON이 업데이트됩니다.
+- `.env` 기반 추가 항목이 필요한 경우, 우측 "기타 설정" 섹션에서 문자열을 입력하면 Secret Manager 또는 `.env` 에 반영됩니다.
+- Cloud Run 실행 중에도 설정 변경 → 저장 → 재기동 없이 즉시 반영되며, 재시작 시 GCS 복구를 통해 동일한 값을 유지합니다.

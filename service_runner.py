@@ -7,6 +7,9 @@ import certifi
 
 import threading
 
+from config_store import apply_runtime_settings_to_env
+apply_runtime_settings_to_env()
+
 # 웹소켓 데이터 모듈
 from ws_streams import FuturesWS
 from ws_cache import WsCache, set_global_cache

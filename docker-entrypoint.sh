@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+python - <<'PY'
+from config_store import apply_runtime_settings_to_env
+apply_runtime_settings_to_env()
+PY
+
 if [ -n "${GOOGLE_CLOUD_PROJECT:-}" ]; then
   echo "[ENTRYPOINT] Running in Cloud Run project ${GOOGLE_CLOUD_PROJECT}"
 fi
