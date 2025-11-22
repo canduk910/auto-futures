@@ -627,8 +627,14 @@ def run_once(symbol: str = "ETHUSDT"):
         target_side = "long" if decision == "long" else ("short" if decision == "short" else None)
         same_qty, opp_qty = (0.0,0.0) if not target_side else extract_existing_position(acct, symbol, target_side, hedge)
 
-        if confidence is not None and 0.0 < confidence < 0.5:
-            log.warning("낮은 신뢰도(confidence) — 주문 실행 보류")
+        # 신뢰도 임계값을 runtime 설정에서 가져와 적용 (기본 0.5)
+        try:
+            ai_conf_thr = float(os.getenv("AI_CONF_THRESHOLD", os.getenv("AI_CONF_THRESHOLD", "0.5")))
+        except Exception:
+            ai_conf_thr = 0.5
+        ai_conf_thr = max(0.0, min(1.0, ai_conf_thr))
+        if confidence is not None and 0.0 < confidence < ai_conf_thr:
+            log.warning("낮은 신뢰도(confidence) — 주문 실행 보류 (threshold=%s)", ai_conf_thr)
             set_state("skipped", last_decision=decision, last_confidence=confidence, reason="low_confidence")
             append_event({
                 "source": "trader",

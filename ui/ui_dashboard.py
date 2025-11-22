@@ -86,7 +86,74 @@ def _render_autorefresh(interval_seconds: int, label: str) -> None:
         return
     autorefresh_fn(interval=interval_seconds * 1000, limit=None, key="auto_refresh_tick")
 
-from status_store import read_status, read_ai_history, read_close_history  # noqa: E402
+
+# 테이블 셀 색상 적용 헬퍼
+def _style_trade_actions(df: 'pd.DataFrame') -> 'pd.io.formats.style.Styler':
+    """Return a pandas Styler that colors BUY/Long red and SELL/Short blue for common action/direction columns.
+    It detects common Korean column names used in the UI (동작, 사이드, 방향, 포지션, 진입유형).
+    """
+    try:
+        styler = df.style
+    except Exception:
+        return df
+
+    def color_val(v):
+        try:
+            if v is None:
+                return ""
+            s = str(v).strip().lower()
+            if s in ("buy", "long", "long", "buy/long", "buy_long") or s.startswith("buy") or s == "long":
+                return "color: #d64f3a"  # red-ish
+            if s in ("sell", "short", "sell/short", "sell_short") or s.startswith("sell") or s == "short":
+                return "color: #2563eb"  # blue
+            # Korean labels
+            if s in ("매수", "롱", "long" ):
+                return "color: #d64f3a"
+            if s in ("매도", "숏", "short"):
+                return "color: #2563eb"
+        except Exception:
+            pass
+        return ""
+
+    # 후보 컬럼들
+    # include '결정'/'decision' so AI decision column can be colored similarly
+    candidate_cols = [c for c in df.columns if c in ("동작", "사이드", "방향", "포지션", "진입유형", "결정", "decision", "side", "action", "position")]
+    if not candidate_cols:
+        # try to find columns containing keywords
+        candidate_cols = [c for c in df.columns if any(k in c.lower() for k in ("buy","sell","side","action","position","방향","동작","사이드","포지션"))]
+
+    for col in candidate_cols:
+        try:
+            # Styler.map is preferred over applymap for element-wise CSS mapping
+            styler = styler.map(lambda v: color_val(v), subset=[col])
+        except Exception:
+            # ignore styling failures for a column
+            continue
+
+    # 손익(PnL) 컬럼 색상화: 양수=빨강, 음수=파랑
+    def color_pnl(v):
+        try:
+            if v is None:
+                return ""
+            # 이미 문자열일 수 있으므로 안전하게 float 변환
+            fv = float(v)
+            if fv > 0:
+                return "color: #d64f3a"
+            if fv < 0:
+                return "color: #2563eb"
+        except Exception:
+            pass
+        return ""
+
+    pnl_candidates = [c for c in df.columns if c in ("손익", "realized_pnl_usdt", "손익(USDT)", "pnl", "profit")]
+    for col in pnl_candidates:
+        try:
+            styler = styler.map(lambda v: color_pnl(v), subset=[col])
+        except Exception:
+            continue
+    return styler
+
+from status_store import read_status, read_ai_history, read_close_history, update_status  # noqa: E402
 
 st.set_page_config(page_title="자동 암호화폐 트레이딩", layout="wide")
 
@@ -105,6 +172,7 @@ FLOAT_KEYS = {
     "MP_DELTA_PCT",
     "KLINE_RANGE_PCT",
     "VOL_MULT",
+    "AI_CONF_THRESHOLD",
 }
 INT_KEYS = {
     "LOOP_INTERVAL_SEC",
@@ -124,6 +192,7 @@ EDITABLE_KEYS = [
     "KLINE_RANGE_PCT",
     "VOL_LOOKBACK",
     "VOL_MULT",
+    "AI_CONF_THRESHOLD",
     "USE_QUOTE_VOLUME",
 ]
 
@@ -155,6 +224,10 @@ ENV_FIELD_INFO: Dict[str, Dict[str, str]] = {
     "MP_WINDOW_SEC": {
         "label": "가격 평균 창(초)",
         "description": "MP 계산에 사용할 데이터 창 길이",
+    },
+    "AI_CONF_THRESHOLD": {
+        "label": "AI 신뢰도 임계값",
+        "description": "AI confidence가 이 값 미만이면 주문 실행을 보류합니다 (0.0-1.0)",
     },
     "MP_DELTA_PCT": {
         "label": "가격 변동 임계치(%)",
@@ -412,6 +485,18 @@ if selected_tab == "모니터링":
     col_b.metric("최신 결정", trader.get("last_decision", "-"))
     col_c.metric("신뢰도", trader.get("last_confidence", "-"))
 
+    # 재로딩 관련 정보
+    reload_ts = service.get("last_reload_applied_ts")
+    reload_res = service.get("last_reload_result")
+    if reload_ts:
+        col_a.caption(f"마지막 재로딩 시각: {_format_ts(reload_ts)}")
+    else:
+        col_a.caption("마지막 재로딩 시각: -")
+    if reload_res:
+        col_b.caption(f"마지막 재로딩 결과: {reload_res}")
+    else:
+        col_b.caption("마지막 재로딩 결과: -")
+
     st.divider()
     st.subheader("최근 이벤트")
     if events:
@@ -579,7 +664,11 @@ elif selected_tab == "AI 자문":
                 "손절가",
                 "근거",
             ] if c in display_df.columns]
-            _safe_dataframe(display_df[cols_to_show], hide_index=True)
+            try:
+                styled = _style_trade_actions(display_df[cols_to_show])
+                _safe_dataframe(styled, hide_index=True)
+            except Exception:
+                _safe_dataframe(display_df[cols_to_show], hide_index=True)
         else:
             st.info("기록이 비어 있습니다.")
     else:
@@ -628,7 +717,11 @@ elif selected_tab == "거래 내역":
                 "체결시각",
                 "모의주문",
             ] if c in display_df.columns]
-            _safe_dataframe(display_df[cols_to_show], hide_index=True)
+            try:
+                styled = _style_trade_actions(display_df[cols_to_show])
+                _safe_dataframe(styled, hide_index=True)
+            except Exception:
+                _safe_dataframe(display_df[cols_to_show], hide_index=True)
             if orders_snapshot_ts:
                 st.caption(f"내역 업데이트 기준 시각: {_format_ts(orders_snapshot_ts)}")
         else:
@@ -663,7 +756,11 @@ elif selected_tab == "거래 내역":
                 "마진모드",
                 "레버리지",
             ] if c in display_df.columns]
-            _safe_dataframe(display_df[cols_to_show], hide_index=True)
+            try:
+                styled = _style_trade_actions(display_df[cols_to_show])
+                _safe_dataframe(styled, hide_index=True)
+            except Exception:
+                _safe_dataframe(display_df[cols_to_show], hide_index=True)
             if positions_snapshot_ts:
                 st.caption(f"포지션 스냅샷 시각: {_format_ts(positions_snapshot_ts)}")
         else:
@@ -710,6 +807,110 @@ elif selected_tab == "청산 분석":
                     "손익": "손익",
                     "수익률": "수익률",
                 })
+
+                # 차트: 시간 기준 누적 손익(선 그래프) 및 손익 분포(히스토그램)
+                try:
+                    # 시간 컬럼 결정 (closed_ts 우선, 없으면 ts)
+                    time_col = "closed_ts" if "closed_ts" in close_df.columns else ("ts" if "ts" in close_df.columns else None)
+                    chart_cols = st.columns([2, 1])
+                    if time_col is not None:
+                        tmp = close_df[[time_col, "realized_pnl_usdt"]].copy()
+                        # try seconds -> if ms, detect and convert
+                        try:
+                            tmp["time"] = pd.to_datetime(tmp[time_col], unit='s', errors='coerce')
+                            if tmp["time"].isna().all():
+                                tmp["time"] = pd.to_datetime(tmp[time_col], unit='ms', errors='coerce')
+                        except Exception:
+                            tmp["time"] = pd.to_datetime(tmp[time_col], errors='coerce')
+                        tmp = tmp.dropna(subset=["time"])
+                        tmp = tmp.sort_values(by="time")
+                        tmp["cum_pnl"] = tmp["realized_pnl_usdt"].cumsum()
+
+                        with chart_cols[0]:
+                            st.markdown("#### 누적 청산 손익 (시간)")
+                            try:
+                                # line for cumulative, points colored by recent realized pnl sign
+                                line = alt.Chart(tmp).mark_line(color="#6b7280").encode(
+                                    x=alt.X("time:T", title="시간"),
+                                    y=alt.Y("cum_pnl:Q", title="누적 손익(USDT)"),
+                                )
+                                points = alt.Chart(tmp).mark_circle(size=40).encode(
+                                    x=alt.X("time:T"),
+                                    y=alt.Y("cum_pnl:Q"),
+                                    color=alt.condition(alt.datum.realized_pnl_usdt > 0, alt.value("#d64f3a"), alt.value("#2563eb")),
+                                    tooltip=[alt.Tooltip("time:T", title="시간"), alt.Tooltip("realized_pnl_usdt:Q", title="손익(USDT)")]
+                                )
+                                chart = (line + points).properties(height=260)
+                                _safe_altair_chart(chart)
+                            except Exception:
+                                st.line_chart(tmp.set_index("time")["cum_pnl"], height=260)
+
+                        with chart_cols[1]:
+                            st.markdown("#### 청산 손익 분포")
+                            try:
+                                vals = tmp["realized_pnl_usdt"].dropna()
+                                if not vals.empty:
+                                    # pandas로 binning 후 각 bin의 중간값에 따라 색 지정
+                                    bins = pd.cut(vals, bins=40)
+                                    counts = bins.value_counts().sort_index()
+                                    intervals = counts.index
+                                    lefts = [iv.left for iv in intervals]
+                                    rights = [iv.right for iv in intervals]
+                                    mids = [(l + r) / 2.0 for l, r in zip(lefts, rights)]
+                                    hist_df = pd.DataFrame({
+                                        "left": lefts,
+                                        "right": rights,
+                                        "bin_mid": mids,
+                                        "count": counts.values,
+                                    })
+                                    chart = alt.Chart(hist_df).mark_bar(opacity=0.9).encode(
+                                        x=alt.X("bin_mid:Q", title="손익(USDT)"),
+                                        y=alt.Y("count:Q", title="건수"),
+                                        color=alt.condition(alt.datum.bin_mid > 0, alt.value("#d64f3a"), alt.value("#2563eb")),
+                                        tooltip=[alt.Tooltip("left:Q", title="left"), alt.Tooltip("right:Q", title="right"), alt.Tooltip("count:Q", title="건수")],
+                                    ).properties(height=260)
+                                    _safe_altair_chart(chart)
+                                else:
+                                    st.info("차트를 생성할 데이터가 없습니다.")
+                            except Exception:
+                                try:
+                                    counts = pd.cut(tmp["realized_pnl_usdt"].dropna(), bins=30).value_counts().sort_index()
+                                    st.bar_chart(counts, height=260)
+                                except Exception:
+                                    st.write("차트를 생성할 수 없습니다.")
+                    else:
+                        # 시간 정보가 없으면 히스토그램만 표시
+                        with chart_cols[0]:
+                            st.markdown("#### 청산 손익 분포")
+                            try:
+                                vals = close_df["realized_pnl_usdt"].dropna()
+                                if not vals.empty:
+                                    bins = pd.cut(vals, bins=40)
+                                    counts = bins.value_counts().sort_index()
+                                    intervals = counts.index
+                                    lefts = [iv.left for iv in intervals]
+                                    rights = [iv.right for iv in intervals]
+                                    mids = [(l + r) / 2.0 for l, r in zip(lefts, rights)]
+                                    hist_df = pd.DataFrame({
+                                        "left": lefts,
+                                        "right": rights,
+                                        "bin_mid": mids,
+                                        "count": counts.values,
+                                    })
+                                    chart = alt.Chart(hist_df).mark_bar(opacity=0.9).encode(
+                                        x=alt.X("bin_mid:Q", title="손익(USDT)"),
+                                        y=alt.Y("count:Q", title="건수"),
+                                        color=alt.condition(alt.datum.bin_mid > 0, alt.value("#d64f3a"), alt.value("#2563eb")),
+                                        tooltip=[alt.Tooltip("left:Q", title="left"), alt.Tooltip("right:Q", title="right"), alt.Tooltip("count:Q", title="건수")],
+                                    ).properties(height=260)
+                                    _safe_altair_chart(chart)
+                                else:
+                                    st.info("차트를 생성할 데이터가 없습니다.")
+                            except Exception:
+                                st.write("차트를 생성할 수 없습니다.")
+                except Exception:
+                    st.warning("청산 차트 표시 중 오류가 발생했습니다.")
+
                 cols_to_show = [c for c in [
                     "심볼",
                     "방향",
@@ -718,7 +919,11 @@ elif selected_tab == "청산 분석":
                     "손익",
                     "수익률",
                 ] if c in display_df.columns]
-                _safe_dataframe(display_df[cols_to_show], hide_index=True)
+                try:
+                    styled = _style_trade_actions(display_df[cols_to_show])
+                    _safe_dataframe(styled, hide_index=True)
+                except Exception:
+                    _safe_dataframe(display_df[cols_to_show], hide_index=True)
             else:
                 st.info("청산 내역이 비어 있습니다.")
     else:
@@ -746,6 +951,16 @@ else:  # 설정 탭
             save_config({key: str(new_val)})
             st.success("저장되었습니다.")
             _rerun_app()
+
+    # 설정 탭에서 서비스에 즉시 재로딩을 요청할 수 있는 버튼
+    if st.button("서비스에 설정 재로딩 요청 (지금)"):
+        try:
+            ts = time.time()
+            update_status("service", {"reload_requested_ts": ts})
+            st.success("서비스에 재로딩 요청을 보냈습니다.")
+            _rerun_app()
+        except Exception as e:
+            st.error(f"재로딩 요청 오류: {e}")
 
 st.sidebar.markdown(
     """

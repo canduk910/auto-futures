@@ -40,6 +40,7 @@ MANAGED_RUNTIME_KEYS: Dict[str, Dict[str, Any]] = {
     "KLINE_RANGE_PCT": {"type": "float", "default": 0.4},
     "VOL_LOOKBACK": {"type": "int", "default": 20},
     "VOL_MULT": {"type": "float", "default": 2.0},
+    "AI_CONF_THRESHOLD": {"type": "float", "default": 0.5},
     "USE_QUOTE_VOLUME": {"type": "bool", "default": True},
 }
 

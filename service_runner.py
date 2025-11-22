@@ -20,7 +20,7 @@ from ws_streams import FuturesWS
 from ws_cache import WsCache, set_global_cache
 
 # UI 상태저장소
-from ui.status_store import update_status, append_event
+from ui.status_store import update_status, append_event, read_status
 
 # queue.Empty 타입 방어
 import queue as pyqueue
@@ -34,7 +34,14 @@ except Exception:
 # 공통 유틸
 from common_utils import safe_float
 
-from runtime_sync import safe_upload
+try:
+    from runtime_sync import safe_upload
+except Exception:
+    # 테스트/개발 환경에서 google-cloud 라이브러리가 없을 수 있으므로
+    # 폴백 함수를 제공하여 임포트 시 실패하지 않도록 함.
+    def safe_upload(*args, **kwargs):
+        logging.getLogger("SERVICE").warning("safe_upload unavailable (runtime_sync import failed). Skipping upload.")
+        return None
 
 log = logging.getLogger("SERVICE")
 _STOP = threading.Event()
@@ -298,15 +305,7 @@ def _sync_worker():
         except Exception:
             log.exception("runtime sync 실패")
 
-def run_service(symbol: str, run_once_cb: Callable[[str], None]):
-    runtime_settings = runtime_settings_snapshot()
-
-    trigger   = str(runtime_settings.get("LOOP_TRIGGER") or os.getenv("LOOP_TRIGGER", "kline")).lower()
-    interval  = int(runtime_settings.get("LOOP_INTERVAL_SEC") or os.getenv("LOOP_INTERVAL_SEC", "60"))
-    cooldown  = int(runtime_settings.get("LOOP_COOLDOWN_SEC") or os.getenv("LOOP_COOLDOWN_SEC", "8"))
-    backoff_m = int(runtime_settings.get("LOOP_BACKOFF_MAX_SEC") or os.getenv("LOOP_BACKOFF_MAX_SEC", "30"))
-    env_name  = str(runtime_settings.get("ENV") or os.getenv("ENV", "paper"))
-
+def _load_event_settings(runtime_settings):
     # 이벤트 모드 파라미터 (runtime/settings.json 우선)
     mp_win  = int(runtime_settings.get("MP_WINDOW_SEC") or os.getenv("MP_WINDOW_SEC", "10"))
     mp_pct  = float(runtime_settings.get("MP_DELTA_PCT") or os.getenv("MP_DELTA_PCT", "0.35"))
@@ -317,6 +316,96 @@ def run_service(symbol: str, run_once_cb: Callable[[str], None]):
         use_qv = bool(runtime_settings.get("USE_QUOTE_VOLUME"))
     else:
         use_qv = os.getenv("USE_QUOTE_VOLUME", "true").lower() in ("1","true","yes")
+
+    return {
+        "mp_win": mp_win,
+        "mp_pct": mp_pct,
+        "rng_pct": rng_pct,
+        "vol_lb": vol_lb,
+        "vol_mul": vol_mul,
+        "use_qv": use_qv,
+    }
+
+def _apply_detector_settings(detector, new_cfg, mp_win, mp_pct, rng_pct, vol_lb, vol_mul, use_qv):
+    changed = []
+    if new_cfg["mp_pct"] != mp_pct:
+        detector.mp_delta_pct = new_cfg["mp_pct"]; mp_pct = new_cfg["mp_pct"]; changed.append("MP_DELTA_PCT")
+    if new_cfg["mp_win"] != mp_win:
+        detector.mp_window_sec = new_cfg["mp_win"]; mp_win = new_cfg["mp_win"]; changed.append("MP_WINDOW_SEC")
+    if new_cfg["rng_pct"] != rng_pct:
+        detector.kline_range_pct = new_cfg["rng_pct"]; rng_pct = new_cfg["rng_pct"]; changed.append("KLINE_RANGE_PCT")
+    if new_cfg["vol_lb"] != vol_lb:
+        detector.vol_lookback = new_cfg["vol_lb"]; vol_lb = new_cfg["vol_lb"]
+        detector._vol_hist = collections.deque(maxlen=max(5, vol_lb)); changed.append("VOL_LOOKBACK")
+    if new_cfg["vol_mul"] != vol_mul:
+        detector.vol_mult = new_cfg["vol_mul"]; vol_mul = new_cfg["vol_mul"]; changed.append("VOL_MULT")
+    if new_cfg["use_qv"] != use_qv:
+        detector.use_quote_volume = new_cfg["use_qv"]; use_qv = new_cfg["use_qv"]; changed.append("USE_QUOTE_VOLUME")
+    return changed, (mp_win, mp_pct, rng_pct, vol_lb, vol_mul, use_qv)
+
+def _transition_trigger(current_ws, current_trigger: str, desired_trigger: str, env_name: str, symbol: str, evt_q, cache,
+                        max_attempts: int = 3, attempt_delay: float = 2.0):
+    """Attempt to transition runtime trigger safely.
+
+    Returns: (ws_instance or None, applied_trigger, ok_flag, message)
+    """
+    logger = logging.getLogger("SERVICE")
+    desired = (desired_trigger or "").lower()
+    if desired == current_trigger:
+        return current_ws, current_trigger, True, "no_change"
+
+    # Transition to timer: stop websocket if exists
+    if desired == "timer":
+        if current_ws:
+            try:
+                current_ws.stop()
+                logger.info("WebSocket stopped for transition to timer")
+            except Exception as e:
+                logger.warning("WebSocket stop failed during trigger transition: %s", e)
+        return None, "timer", True, "to_timer"
+
+    # Transition to event/kline: ensure WS running
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if current_ws is None:
+                ws = FuturesWS(env=env_name, symbol=symbol, event_queue=evt_q, enable_user=False, enable_price=True, cache=cache)
+                ws.start()
+                logger.info("WebSocket started during trigger transition (attempt %d)", attempt)
+                return ws, desired, True, f"to_{desired}"
+            else:
+                # already have ws
+                return current_ws, desired, True, f"to_{desired}"
+        except Exception as e:
+            last_err = e
+            logger.warning("WebSocket start attempt %d failed: %s", attempt, e)
+            time.sleep(attempt_delay)
+    # All attempts failed -> fallback to timer
+    logger.error("All WebSocket start attempts failed during trigger transition: %s", last_err)
+    try:
+        if current_ws:
+            current_ws.stop()
+    except Exception:
+        pass
+    return None, "timer", False, f"fallback_to_timer: {last_err}"
+
+def run_service(symbol: str, run_once_cb: Callable[[str], None]):
+    runtime_settings = runtime_settings_snapshot()
+
+    trigger   = str(runtime_settings.get("LOOP_TRIGGER") or os.getenv("LOOP_TRIGGER", "kline")).lower()
+    interval  = int(runtime_settings.get("LOOP_INTERVAL_SEC") or os.getenv("LOOP_INTERVAL_SEC", "60"))
+    cooldown  = int(runtime_settings.get("LOOP_COOLDOWN_SEC") or os.getenv("LOOP_COOLDOWN_SEC", "8"))
+    backoff_m = int(runtime_settings.get("LOOP_BACKOFF_MAX_SEC") or os.getenv("LOOP_BACKOFF_MAX_SEC", "30"))
+    env_name  = str(runtime_settings.get("ENV") or os.getenv("ENV", "paper"))
+
+    # 이벤트 모드 파라미터 (runtime/settings.json 우선)
+    _initial_cfg = _load_event_settings(runtime_settings)
+    mp_win = _initial_cfg["mp_win"]
+    mp_pct = _initial_cfg["mp_pct"]
+    rng_pct = _initial_cfg["rng_pct"]
+    vol_lb = _initial_cfg["vol_lb"]
+    vol_mul = _initial_cfg["vol_mul"]
+    use_qv = _initial_cfg["use_qv"]
 
     log.info(
         "start trigger=%s interval=%ss cooldown=%ss runtime_source=settings.json",
@@ -371,10 +460,96 @@ def run_service(symbol: str, run_once_cb: Callable[[str], None]):
     backoff  = 1.0
     sync_thread = threading.Thread(target=_sync_worker, name="runtime-sync", daemon=True)
     sync_thread.start()
+    # 설정 재로딩 제어 변수 (UI 변경을 런타임에 반영하기 위해 주기적으로 settings.json을 다시 읽음)
+    last_settings_reload = 0.0
+    SETTINGS_RELOAD_INTERVAL = float(os.getenv("SETTINGS_RELOAD_INTERVAL_SEC", "5"))
+
+    # UI에서 즉시 재로딩 요청을 추적하기 위한 변수
+    last_reload_request_ts = 0.0
+
     try:
         mark_cnt = 0; kline_cnt = 0; last_stat = time.time()
         while not _STOP.is_set():
             try:
+                # 먼저 UI에서 즉시 재로딩 요청이 있는지 확인
+                try:
+                    status_snapshot = read_status()
+                    svc_node = status_snapshot.get("service") if isinstance(status_snapshot.get("service"), dict) else {}
+                    req_ts = float(svc_node.get("reload_requested_ts") or 0)
+                except Exception:
+                    req_ts = 0
+                if req_ts and req_ts > last_reload_request_ts:
+                    log.info("service reload requested via UI (ts=%s)", req_ts)
+                    last_reload_request_ts = req_ts
+                    try:
+                        rs = runtime_settings_snapshot()
+                        desired_trigger = str(rs.get("LOOP_TRIGGER") or os.getenv("LOOP_TRIGGER", "kline")).lower()
+                        ws_instance, applied_trigger, ok, msg = _transition_trigger(
+                            ws_instance, trigger, desired_trigger, env_name, symbol, evt_q, cache,
+                            max_attempts=int(os.getenv("TRIGGER_TRANSITION_ATTEMPTS", "3")),
+                            attempt_delay=float(os.getenv("TRIGGER_TRANSITION_DELAY_SEC", "2")),
+                        )
+                        prev_trigger = trigger
+                        trigger = applied_trigger
+                        # ensure detector exists if needed
+                        if trigger in ("event", "kline") and detector is None:
+                            detector = VolatilityDetector(
+                                mp_window_sec=mp_win, mp_delta_pct=mp_pct,
+                                kline_range_pct=rng_pct, vol_lookback=vol_lb, vol_mult=vol_mul,
+                                use_quote_volume=use_qv
+                            )
+                        if trigger == "timer":
+                            detector = None
+
+                        new_cfg = _load_event_settings(rs)
+                        changed, (mp_win, mp_pct, rng_pct, vol_lb, vol_mul, use_qv) = _apply_detector_settings(
+                            detector, new_cfg, mp_win, mp_pct, rng_pct, vol_lb, vol_mul, use_qv
+                        )
+
+                        applied_ts = time.time()
+                        # 기록: 마지막 재로딩 결과/시각 및 현재 트리거
+                        update_status("service", {
+                            "last_reload_applied_ts": applied_ts,
+                            "last_reload_result": msg,
+                            "trigger": trigger,
+                        })
+                        append_event({
+                            "source": "service",
+                            "event_type": "reload",
+                            "result": msg,
+                            "changed": changed,
+                            "prev_trigger": prev_trigger,
+                            "applied_trigger": trigger,
+                            "ts": applied_ts,
+                        })
+                        if changed:
+                            log.info("runtime settings reloaded (UI request): %s", ", ".join(changed))
+                    except Exception:
+                        log.exception("failed to handle UI reload request")
+
+                # 주기적으로 runtime/settings.json을 재로딩하여 detector 파라미터 업데이트
+                nowt = time.time()
+                if nowt - last_settings_reload >= SETTINGS_RELOAD_INTERVAL:
+                    try:
+                        rs = runtime_settings_snapshot()
+                        new_cfg = _load_event_settings(rs)
+                    except Exception:
+                        new_cfg = {
+                            "mp_win": mp_win,
+                            "mp_pct": mp_pct,
+                            "rng_pct": rng_pct,
+                            "vol_lb": vol_lb,
+                            "vol_mul": vol_mul,
+                            "use_qv": use_qv,
+                        }
+
+                    changed, (mp_win, mp_pct, rng_pct, vol_lb, vol_mul, use_qv) = _apply_detector_settings(
+                        detector, new_cfg, mp_win, mp_pct, rng_pct, vol_lb, vol_mul, use_qv
+                    )
+                    if changed:
+                        log.info("runtime settings reloaded: %s", ", ".join(changed))
+                    last_settings_reload = nowt
+
                 if trigger == "timer":
                     now = time.time()
                     if now - last_run >= max(1, interval):
