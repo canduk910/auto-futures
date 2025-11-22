@@ -7,7 +7,12 @@ import certifi
 
 import threading
 
-from config_store import apply_runtime_settings_to_env
+# 설정 파일 → 환경변수 동기화
+from config_store import apply_runtime_settings_to_env, runtime_settings_snapshot
+
+# 1) .env 우선 로드 → 2) runtime/settings.json 값으로 덮어씌워 UI 저장값을 보장
+from dotenv import load_dotenv
+load_dotenv()
 apply_runtime_settings_to_env()
 
 # 웹소켓 데이터 모듈
@@ -28,10 +33,6 @@ except Exception:
 
 # 공통 유틸
 from common_utils import safe_float
-
-# .env 파일에서 환경변수 로드
-from dotenv import load_dotenv
-load_dotenv()
 
 from runtime_sync import safe_upload
 
@@ -298,21 +299,31 @@ def _sync_worker():
             log.exception("runtime sync 실패")
 
 def run_service(symbol: str, run_once_cb: Callable[[str], None]):
-    trigger   = os.getenv("LOOP_TRIGGER", "kline").lower()   # kline | timer
-    interval  = int(os.getenv("LOOP_INTERVAL_SEC", "60"))
-    cooldown  = int(os.getenv("LOOP_COOLDOWN_SEC", "8"))
-    backoff_m = int(os.getenv("LOOP_BACKOFF_MAX_SEC", "30"))
-    env_name  = os.getenv("ENV", "paper")
+    runtime_settings = runtime_settings_snapshot()
 
-    # 이벤트 모드 파라미터
-    mp_win  = int(os.getenv("MP_WINDOW_SEC", "10"))
-    mp_pct  = float(os.getenv("MP_DELTA_PCT", "0.35"))
-    rng_pct = float(os.getenv("KLINE_RANGE_PCT", "0.6"))
-    vol_lb  = int(os.getenv("VOL_LOOKBACK", "20"))
-    vol_mul = float(os.getenv("VOL_MULT", "3.0"))
-    use_qv  = os.getenv("USE_QUOTE_VOLUME", "true").lower() in ("1","true","yes")    
+    trigger   = str(runtime_settings.get("LOOP_TRIGGER") or os.getenv("LOOP_TRIGGER", "kline")).lower()
+    interval  = int(runtime_settings.get("LOOP_INTERVAL_SEC") or os.getenv("LOOP_INTERVAL_SEC", "60"))
+    cooldown  = int(runtime_settings.get("LOOP_COOLDOWN_SEC") or os.getenv("LOOP_COOLDOWN_SEC", "8"))
+    backoff_m = int(runtime_settings.get("LOOP_BACKOFF_MAX_SEC") or os.getenv("LOOP_BACKOFF_MAX_SEC", "30"))
+    env_name  = str(runtime_settings.get("ENV") or os.getenv("ENV", "paper"))
 
-    log.info(f"start trigger={trigger} interval={interval}s cooldown={cooldown}s")
+    # 이벤트 모드 파라미터 (runtime/settings.json 우선)
+    mp_win  = int(runtime_settings.get("MP_WINDOW_SEC") or os.getenv("MP_WINDOW_SEC", "10"))
+    mp_pct  = float(runtime_settings.get("MP_DELTA_PCT") or os.getenv("MP_DELTA_PCT", "0.35"))
+    rng_pct = float(runtime_settings.get("KLINE_RANGE_PCT") or os.getenv("KLINE_RANGE_PCT", "0.6"))
+    vol_lb  = int(runtime_settings.get("VOL_LOOKBACK") or os.getenv("VOL_LOOKBACK", "20"))
+    vol_mul = float(runtime_settings.get("VOL_MULT") or os.getenv("VOL_MULT", "3.0"))
+    if "USE_QUOTE_VOLUME" in runtime_settings:
+        use_qv = bool(runtime_settings.get("USE_QUOTE_VOLUME"))
+    else:
+        use_qv = os.getenv("USE_QUOTE_VOLUME", "true").lower() in ("1","true","yes")
+
+    log.info(
+        "start trigger=%s interval=%ss cooldown=%ss runtime_source=settings.json",
+        trigger,
+        interval,
+        cooldown,
+    )
     update_status("service", {
         "state": "starting",
         "trigger": trigger,

@@ -130,6 +130,11 @@ def apply_runtime_settings_to_env() -> None:
         os.environ[key] = _stringify_runtime_value(key, value)
 
 
+def runtime_settings_snapshot(seed: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Return the latest runtime settings with proper casting."""
+    return _read_runtime_settings(seed)
+
+
 def _get_project_id() -> str:
     return os.getenv("PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
 
